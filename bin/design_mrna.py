@@ -155,6 +155,7 @@ def run_lineardesign(protein_seq: str, lineardesign_dir: str = None,
                 [str(binary), str(lam), '0', str(codon_table)],
                 input=protein_seq,
                 capture_output=True, text=True, timeout=600,
+                cwd=ld_dir,
             )
             if result.returncode == 0:
                 return _parse_lineardesign_output(result.stdout)
