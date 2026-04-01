@@ -214,21 +214,25 @@ The harder test — all peptides are mutant-derived, sampled from the same scree
 | Structural (Tier 1) | 0.642 | 1.000 | 1.000 | 1.000 | 0.680 |
 | Composite | 0.923 | 0.800 | 0.900 | 0.900 | 0.920 |
 
-BigMHC-IM achieves AUC 0.917 and PPV@20 of 0.90 on the mutant-vs-mutant benchmark — 9 out of the top 10 scored peptides are truly immunogenic. The structural tier 1 score adds marginal value in the composite (AUC 0.923) since without wildtype comparison all mutants get similar position-based scores.
+### Benchmark 3: Full pipeline per-patient (5 patients, 7,328 candidates)
 
-Top 10 predictions from Benchmark 2:
-```
-[+] TLYSLTLLY    HLA-A29:02   BigMHC=0.984
-[-] VVSAWYYFR    HLA-A30:02   BigMHC=0.982
-[+] QTNPVTLQY    HLA-A29:02   BigMHC=0.967
-[+] VQIISCQY     HLA-A30:02   BigMHC=0.966
-[+] IMQTLAGELY   HLA-A29:02   BigMHC=0.952
-[+] RVCGPCSTY    HLA-A29:02   BigMHC=0.925
-[+] CTIAVVNFL    HLA-A68:02   BigMHC=0.897
-[+] IPRDVFRSL    HLA-B07:02   BigMHC=0.882
-[+] FFYLLDFTF    HLA-A29:02   BigMHC=0.876
-[+] KVDPIGHVY    HLA-A30:02   BigMHC=0.864
-```
+The hardest test — runs the COMPLETE pipeline (MHCflurry binding + BigMHC-IM + foreignness + structural + composite ranking) on all peptide windows from each patient's screened nmers, then checks whether confirmed immunogenic peptides land in the top selections.
+
+| Patient | Candidates | Confirmed | Found | Recall@20 | Recall@50 |
+|---|---|---|---|---|---|
+| 3713 (melanoma) | 3,760 | 11 | 11/11 | 2/11 (0.18) | 3/11 (0.27) |
+| 3466 | 2,033 | 6 | 6/6 | 0/6 (0.00) | 1/6 (0.17) |
+| 3678 | 742 | 5 | 4/5 | 2/5 (0.40) | 2/5 (0.40) |
+| 2098 | 24 | 4 | 4/4 | 4/4 (1.00) | 4/4 (1.00) |
+| 4287 | 769 | 4 | 4/4 | 1/4 (0.25) | 1/4 (0.25) |
+| **Macro avg** | | | **29/30** | | **0.37** | **0.42** |
+
+**Key findings:**
+- **Recall of confirmed positives**: 29 of 30 confirmed immunogenic peptides appear somewhere in the ranked list (97% detection rate). The pipeline finds them — the question is ranking.
+- **Recall@20 = 0.37**: On average, 37% of confirmed immunogenic peptides land in the top 20. This is the core metric for vaccine design (top 20 go into the construct).
+- **Patient 2098**: Perfect recall — all 4 confirmed immunogenic peptides ranked in top 9 out of only 24 candidates. Small candidate pool helps.
+- **Patient 3713**: 11 confirmed positives from 3,760 candidates. Top 2 (TLYSLTLLY, QTNPVTLQY) ranked 13th and 19th — just inside top 20. The rest ranked 22-470 out of 3,760.
+- **Room for improvement**: Foreignness scoring (k-mer) and structural scoring (tier 1 position lookup) add limited signal. Tier 2/3 structural scoring (PANDORA/AlphaFold) and expression/CCF integration would likely improve ranking.
 
 ## Known Limitations
 
