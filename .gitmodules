@@ -1,0 +1,6 @@
+[submodule "LinearDesign"]
+	path = LinearDesign
+	url = https://github.com/LinearDesignSoftware/LinearDesign.git
+[submodule "models/DeepImmuno"]
+	path = models/DeepImmuno
+	url = https://github.com/frankligy/DeepImmuno.git

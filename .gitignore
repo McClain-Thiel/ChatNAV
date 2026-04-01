@@ -1,0 +1,46 @@
+# Secrets
+.env
+*.key
+
+# Nextflow
+.nextflow/
+.nextflow.log*
+work/
+results/
+test_results/
+
+# Demo data (downloaded at runtime)
+demo/tcga_skcm/*.maf.gz
+demo/tcga_skcm/*.tsv
+demo/mc3.*.maf.gz
+
+# Reference data (downloaded at runtime)
+reference/proteome/
+reference/gtex_priors/*.tsv
+
+# Model weights and caches
+*.h5
+*.pt
+*.ckpt
+
+# LinearDesign build artifacts
+LinearDesign/bin/
+LinearDesign/*.o
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+*.prd
+
+# Docker
+*.tar
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

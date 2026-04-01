@@ -1,0 +1,68 @@
+# Scoring weight profiles for Module 9 (Candidate Ranking & Selection)
+# Weights must sum to 1.0 (excluding bonuses)
+
+high_tmb:
+  # Melanoma, NSCLC — abundant neoantigens, standard weighting
+  weights:
+    immunogenicity_score: 0.35
+    foreignness_score: 0.15
+    agretopicity: 0.10
+    mhc_binding: 0.15
+    stability: 0.10
+    expression: 0.10
+    ccf: 0.05
+    structural: 0.00   # set to 0.10 if structural_scoring enabled
+  bonuses:
+    is_frameshift: 0.10
+    is_shared_neoantigen: 0.15
+    is_cd4_epitope: 0.05
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 1.0
+    min_ccf: 0.5
+    min_agretopicity: 0.0
+    not_self_match: true
+
+low_tmb:
+  # PDAC, GBM, MSS-CRC — fewer neoantigens, upweight frameshift/shared
+  weights:
+    immunogenicity_score: 0.30
+    foreignness_score: 0.15
+    agretopicity: 0.10
+    mhc_binding: 0.15
+    stability: 0.10
+    expression: 0.10
+    ccf: 0.05
+    structural: 0.05
+  bonuses:
+    is_frameshift: 0.15
+    is_shared_neoantigen: 0.20
+    is_cd4_epitope: 0.05
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 0.5
+    min_ccf: 0.3
+    min_agretopicity: 0.0
+    not_self_match: true
+
+research:
+  # Include all candidates, no top-N cap, full score breakdown
+  weights:
+    immunogenicity_score: 0.35
+    foreignness_score: 0.15
+    agretopicity: 0.10
+    mhc_binding: 0.15
+    stability: 0.10
+    expression: 0.10
+    ccf: 0.05
+    structural: 0.00
+  bonuses:
+    is_frameshift: 0.10
+    is_shared_neoantigen: 0.15
+    is_cd4_epitope: 0.05
+  hard_filters:
+    mhc_binding_rank: 1.0    # no filter
+    min_tpm: 0.0
+    min_ccf: 0.0
+    min_agretopicity: -999.0
+    not_self_match: false
