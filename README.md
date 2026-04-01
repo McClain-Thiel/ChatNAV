@@ -192,15 +192,43 @@ ChatNAV/
 
 ## Benchmark Results
 
-Benchmarked against Gartner et al. 2021 (Nature Cancer) ground truth — 120 experimentally confirmed immunogenic peptide-HLA pairs vs 119 matched wildtype negatives from 61 NCI patients.
+Benchmarked against Gartner et al. 2021 (Nature Cancer) ground truth from 61 NCI patients.
+
+### Benchmark 1: Immunogenic mutant vs wildtype (120 pos / 119 neg)
+
+Tests whether scoring separates immunogenic mutant peptides from their own wildtype sequences.
 
 | Scoring Method | AUC | PPV@5 | PPV@10 | PPV@20 | PPV@50 |
 |---|---|---|---|---|---|
-| BigMHC-IM alone | 0.619 | 0.600 | 0.600 | 0.550 | 0.660 |
-| Structural (Tier 1 position) | 0.883 | 1.000 | 1.000 | 1.000 | 0.980 |
-| Composite (0.7 IM + 0.3 Struct) | 0.742 | 1.000 | 1.000 | 0.850 | 0.740 |
+| BigMHC-IM | 0.619 | 0.600 | 0.600 | 0.550 | 0.660 |
+| Structural (Tier 1) | 0.419 | 1.000 | 1.000 | 1.000 | 0.980 |
+| Composite | 0.597 | 1.000 | 0.700 | 0.600 | 0.620 |
 
-The structural tier 1 score is strong on this benchmark because confirmed immunogenic mutations are disproportionately at TCR-facing positions (P4-P7), while wildtype peptides score 0 by definition. A harder benchmark against all screened mutant candidates (including non-immunogenic mutants) is in progress.
+### Benchmark 2: Immunogenic vs non-immunogenic mutants (120 pos / 600 neg)
+
+The harder test — all peptides are mutant-derived, sampled from the same screened patients. Tests real immunogenicity discrimination.
+
+| Scoring Method | AUC | PPV@5 | PPV@10 | PPV@20 | PPV@50 |
+|---|---|---|---|---|---|
+| **BigMHC-IM** | **0.917** | **0.800** | **0.900** | **0.900** | **0.920** |
+| Structural (Tier 1) | 0.642 | 1.000 | 1.000 | 1.000 | 0.680 |
+| Composite | 0.923 | 0.800 | 0.900 | 0.900 | 0.920 |
+
+BigMHC-IM achieves AUC 0.917 and PPV@20 of 0.90 on the mutant-vs-mutant benchmark — 9 out of the top 10 scored peptides are truly immunogenic. The structural tier 1 score adds marginal value in the composite (AUC 0.923) since without wildtype comparison all mutants get similar position-based scores.
+
+Top 10 predictions from Benchmark 2:
+```
+[+] TLYSLTLLY    HLA-A29:02   BigMHC=0.984
+[-] VVSAWYYFR    HLA-A30:02   BigMHC=0.982
+[+] QTNPVTLQY    HLA-A29:02   BigMHC=0.967
+[+] VQIISCQY     HLA-A30:02   BigMHC=0.966
+[+] IMQTLAGELY   HLA-A29:02   BigMHC=0.952
+[+] RVCGPCSTY    HLA-A29:02   BigMHC=0.925
+[+] CTIAVVNFL    HLA-A68:02   BigMHC=0.897
+[+] IPRDVFRSL    HLA-B07:02   BigMHC=0.882
+[+] FFYLLDFTF    HLA-A29:02   BigMHC=0.876
+[+] KVDPIGHVY    HLA-A30:02   BigMHC=0.864
+```
 
 ## Known Limitations
 
