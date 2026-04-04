@@ -13,40 +13,64 @@ Step 0: Peptide Generation + MHC Binding
     MHCflurry 2.2 presentation predictions (mutant + wildtype)
     │
     ▼
-Module 8a: Immunogenicity + Foreignness Scoring
-    BigMHC-IM (Nature Machine Intelligence 2023) → immunogenicity [0,1]
-    k-mer foreignness vs UniProt human proteome (20,659 proteins)
-    Agretopicity: log2(wt_rank / mut_rank)
+Module 8a: Scoring Signals
+    BigMHC-IM immunogenicity score
+    k-mer foreignness vs human proteome
+    Agretopicity (wt vs mut binding ratio)
     │
     ▼
 Module 8b: Structural Scoring (Tiered)
-    Tier 1: TCR-facing position lookup (P3-P7 for 9-mers) — instant
+    Tier 1: TCR-facing position lookup — instant
     Tier 2: PANDORA homology modeling + SASA — minutes, CPU
-    Tier 3: AlphaFold via Tamarind.bio — hours, top 5-10 only
+    Tier 3: AlphaFold2-Multimer (local NIM) — hours, GPU
     │
     ▼
-Module 9: Composite Ranking & Selection
-    Weighted formula: immunogenicity (0.35) + foreignness (0.15)
-      + agretopicity (0.10) + binding (0.15) + stability (0.10)
-      + expression (0.10) + CCF (0.05)
-    Bonuses: frameshift (+0.10), shared neoantigen (+0.15), CD4 (+0.05)
-    Hard filters → top 20 with HLA diversity
+Module 9: Sequential Filter Pipeline
+    1. FILTER: binding rank < 2%
+    2. FILTER: expression TPM > 1
+    3. FILTER: CCF > 0.3 (clonal)
+    4. FILTER: not self-similar
+    5. RANK: by binding strength
+    6. BONUS: frameshifts + shared neoantigens promoted
+    7. FLAG: immunogenicity, structural, agretopicity as validation
+    8. SELECT: top 20 with HLA diversity
     │
     ▼
 Module 10: Polyepitope Design
     Greedy TSP ordering (minimize junctional epitopes)
-    AAY linkers (MHC-I) / GPGPG linkers (MHC-II)
-    Signal peptide + MITD domain
+    Signal peptide + [Epitope1—AAY—Epitope2—AAY—...] + MITD domain
     │
     ▼
 Module 11: mRNA Design
     LinearDesign: joint codon + mRNA structure optimization
-    5' UTR (HBB) + CDS + 3' UTR (AES/mtRNR1) + poly-A (120nt)
-    N1-methylpseudouridine substitution + CleanCap-AG
+    5'cap — 5'UTR — CDS — 3'UTR — poly-A → synthesis_spec.json
     │
     ▼
-Outputs: mrna_sequence.fasta + synthesis_spec.json
+Output: synthesis-ready mRNA sequence + specification
 ```
+
+## Final Output
+
+The pipeline produces a single mRNA construct encoding all selected neoantigens:
+
+```
+5' Cap — 5' UTR (HBB, 45nt) — CDS — 3' UTR (AES/mtRNR1, 119nt) — Poly-A (120nt)
+                                 │
+                    Signal Peptide (21 aa)
+                    Epitope 1 — AAY linker
+                    Epitope 2 — AAY linker
+                    ...
+                    Epitope 20 — AAAAA
+                    MITD domain (58 aa)
+                    Stop codon
+```
+
+- **Codon optimized** by LinearDesign (joint CAI + MFE optimization)
+- **N1-methylpseudouridine** substitution at all uridine positions
+- **CleanCap-AG** co-transcriptional capping
+- Output files: `mrna_sequence.fasta` + `synthesis_spec.json`
+
+This is the format used by BioNTech (BNT122) and Moderna (mRNA-4157) for their individualized neoantigen vaccines.
 
 ## Tools
 
@@ -56,7 +80,7 @@ Outputs: mrna_sequence.fasta + synthesis_spec.json
 | MHC-I binding | MHCflurry 2.2 | Binding affinity + antigen processing + presentation | Apache 2.0 |
 | Immunogenicity | BigMHC-IM | Transformer-based immunogenicity prediction | Academic |
 | Foreignness | k-mer vs UniProt proteome | Self-similarity scoring (10.4M 9-mers) | -- |
-| Structural | Position lookup / PANDORA / AlphaFold | TCR exposure scoring (tiered) | Mixed |
+| Structural | Position lookup / PANDORA / AlphaFold2 | TCR exposure scoring (tiered) | Mixed |
 | Codon optimization | LinearDesign | Joint codon + mRNA structure optimization | Academic |
 
 ## Quick Start
@@ -108,31 +132,37 @@ Parses somatic mutations from TCGA masked MAF format. For each missense, framesh
 1. Looks up the real protein sequence from Ensembl GRCh38 (release 110)
 2. Generates all 8-11mer peptide windows containing the mutation site
 3. Runs MHCflurry Class1PresentationPredictor for binding + presentation scores
-4. Runs MHCflurry on wildtype peptides at the same positions for agretopicity calculation
+4. Runs MHCflurry on wildtype peptides at the same positions for agretopicity
 
-### Module 8a: Immunogenicity Scoring
+### Module 8a: Scoring Signals
 
-Three independent signals for each peptide-HLA pair:
+Three independent signals computed for each peptide-HLA pair:
 
-- **BigMHC-IM** (Albert et al., Nature Machine Intelligence 2023): Transformer-based immunogenicity prediction. Ensemble of 7 models trained on eluted ligand + immunogenicity data. Supports 8-14mer peptides with fuzzy HLA allele matching.
-
-- **Foreignness**: k-mer overlap against the full UniProt human reference proteome (20,659 proteins, 10.4M 9-mers). Checks exact and 1-mismatch matches. Score of 0 = exact self-match, 1 = maximally foreign.
-
-- **Agretopicity**: `log2(wt_binding_rank / mut_binding_rank)`. High positive = mutation creates a new binding event. Negative = wildtype already binds (tolerance risk).
+- **BigMHC-IM**: Transformer-based immunogenicity prediction (ensemble of 7 models). Used as a validation flag on top candidates, not as a primary ranking signal.
+- **Foreignness**: k-mer overlap against the full UniProt human reference proteome. Score of 0 = exact self-match, 1 = maximally foreign.
+- **Agretopicity**: `log2(wt_binding_rank / mut_binding_rank)`. Positive = mutation creates a new binding event. Negative = wildtype already binds (tolerance risk).
 
 ### Module 8b: Structural Scoring
 
 Tiered approach to score whether the mutated residue is TCR-exposed:
 
-- **Tier 1** (instant): Position lookup table based on crystal structure surveys. TCR-facing positions are P4-P7 for 9-mers, with weighted scores reflecting average solvent exposure.
+- **Tier 1** (instant): Position lookup table from crystal structure surveys. P4-P7 are TCR-facing for 9-mers.
+- **Tier 2** (minutes, CPU): PANDORA homology modeling + BioPython SASA computation. Requires MODELLER (free academic).
+- **Tier 3** (hours, GPU): AlphaFold2-Multimer via local NVIDIA NIM container. Full pMHC structure prediction with real SASA scoring. Deployed on g6e.4xlarge (L40S 46GB).
 
-- **Tier 2** (1-2 min, CPU): PANDORA homology modeling generates a pMHC structure, then BioPython ShrakeRupley computes per-residue solvent-accessible surface area at the mutation site. Requires MODELLER license (free academic).
+### Module 9: Sequential Filter Pipeline
 
-- **Tier 3** (hours, paid): AlphaFold batch prediction via Tamarind.bio API for top 5-10 candidates only. Full pMHC complex structure with real SASA scoring.
+Sequential hard filters reduce the candidate pool, then ranking by binding strength:
 
-### Module 9: Ranking & Selection
-
-Composite scoring formula with configurable weight profiles (`high_tmb`, `low_tmb`, `research`). Hard filters remove candidates with weak binding, low expression, or self-similarity. Top 20 selected with HLA allele diversity enforcement.
+1. **Binding filter**: MHCflurry presentation percentile < 2% (keeps strong binders)
+2. **Expression filter**: Gene TPM > 1 (gene must be expressed in the tumor)
+3. **CCF filter**: Cancer cell fraction > 0.3 (mutation must be clonal/subclonal)
+4. **Self-match filter**: Exclude peptides identical to human proteome
+5. **Rank by binding**: Strongest binders first within the filtered set
+6. **Bonus promotion**: Frameshifts and shared neoantigens get rank boosts
+7. **Validation flags**: Each candidate tagged with immunogenicity, structural, agretopicity assessments
+8. **HLA diversity**: Ensure coverage across patient's HLA alleles
+9. **Select top 20**
 
 ### Module 10: Polyepitope Design
 
@@ -144,17 +174,55 @@ Assembles selected neoantigens into an optimized polyepitope construct:
 
 ### Module 11: mRNA Design
 
-Converts the polyepitope protein into a synthesis-ready mRNA using **LinearDesign** for joint optimization of codon usage (CAI) and mRNA secondary structure (MFE). Adds 5' UTR, 3' UTR, poly-A tail, and outputs a complete synthesis specification with pseudouridine positions.
+Converts the polyepitope protein into a synthesis-ready mRNA using **LinearDesign** for joint optimization of codon usage (CAI) and mRNA secondary structure (MFE). Adds 5' UTR, 3' UTR, poly-A tail, and outputs a synthesis specification with pseudouridine positions.
 
 ## Example Output (TCGA-EE-A3J5 Melanoma)
 
 ```
 Patient: TCGA-EE-A3J5 (TCGA SKCM melanoma)
 Variants: 2,584 somatic → 1,890 peptide windows → 260 strong binders
-  → 84 pass filters → 20 selected
-Polyepitope: 322 amino acids
+  → 139 pass all filters → 20 selected
+Polyepitope: 332 amino acids
 mRNA: 1,253 nt | GC: 57.2% | MFE: -679.9 kcal/mol | CAI: 0.900
 ```
+
+## Benchmark Results
+
+### Muller/Gfeller Harmonized Dataset (Immunity 2023)
+
+Primary benchmark: 131 patients, 13,483 screened mutations (213 immunogenic), all signals real (expression, CCF, agretopicity, wildtype sequences).
+
+**Sequential filter funnel:**
+```
+13,483 mutations (213 immunogenic, 1.6%)
+  ↓ Binding < 2%
+9,369 (196 pos, 92% recall)
+  ↓ Expression > 1 TPM
+6,513 (184 pos, 86% recall)
+  ↓ CCF > 0.3
+~6,400 (180 pos, 85% recall)
+  ↓ Rank by binding strength → top 20 per patient
+```
+
+**Per-patient results:**
+| Metric | Value |
+|---|---|
+| Macro Recall@20 | **0.584** |
+| Macro Recall@50 | 0.649 |
+| Patients with R@20 > 0 | 72/97 (74%) |
+
+**Individual signal AUCs (mutation-level):**
+| Signal | AUC | Role in pipeline |
+|---|---|---|
+| PRIME binding rank | **0.746** | Primary ranking signal |
+| Expression (TPM) | **0.739** | Hard filter |
+| Agretopicity | 0.590 | Validation flag |
+| BigMHC-IM | 0.586 | Validation flag |
+| CCF | 0.535 | Hard filter |
+| Structural tier 1 | 0.500 | Validation flag |
+| Foreignness | 0.478 | Hard filter |
+
+**Key finding**: Sequential hard filters + rank by binding strength (Recall@20 = 0.584) outperforms a weighted composite of all signals (Recall@20 = 0.372) by 57%. Binding rank is the strongest discriminator after filtering; immunogenicity and structural scores are most valuable as validation flags on top candidates.
 
 ## Project Structure
 
@@ -164,89 +232,55 @@ ChatNAV/
 │   ├── maf_to_pipeline_input.py        # Step 0: MAF → peptides + MHCflurry
 │   ├── score_immunogenicity.py         # Module 8a: BigMHC-IM + foreignness
 │   ├── structural_scoring.py           # Module 8b: Tiered structural scoring
-│   ├── rank_and_select.py              # Module 9: Composite ranking
+│   ├── rank_and_select.py              # Module 9: Sequential filter ranking
 │   ├── design_polyepitope.py           # Module 10: Polyepitope assembly
 │   └── design_mrna.py                  # Module 11: mRNA + LinearDesign
 ├── conf/                           # Configuration
-│   └── scoring_weights.yaml            # Weight profiles
+│   └── scoring_weights.yaml            # Filter thresholds + profiles
 ├── reference/                      # Small reference data
 │   ├── signal_peptides.fasta
 │   ├── shared_neoantigens/
 │   └── utr_library/
+├── benchmark/                      # Benchmark data + scripts
+│   ├── muller/                         # Muller/Gfeller 131-patient dataset
+│   └── gartner/                        # Gartner NCI 61-patient dataset
 ├── LinearDesign/                   # Submodule: codon optimization
-├── models/DeepImmuno/              # Submodule: legacy immunogenicity model
+├── models/DeepImmuno/              # Submodule: legacy model
 ├── docker/                         # Dockerfiles per module
 ├── modules/                        # Nextflow DSL2 modules
 ├── subworkflows/                   # Nextflow subworkflows
+├── scripts/
+│   └── restore_from_s3.sh             # Restore cached data from S3
 ├── tests/
-│   ├── run_e2e.py                      # Full e2e test
-│   ├── test_scoring.py
-│   ├── test_ranking.py
-│   ├── test_polyepitope.py
-│   └── test_mrna.py
+│   └── run_e2e.py                      # Full e2e test
 ├── main.nf                         # Nextflow entry point
 ├── nextflow.config
 ├── SETUP.md                        # Detailed installation log
 └── plan.md                         # System design document
 ```
 
-## Benchmark Results
+## Infrastructure
 
-Benchmarked against Gartner et al. 2021 (Nature Cancer) ground truth from 61 NCI patients.
-
-### Benchmark 1: Immunogenic mutant vs wildtype (120 pos / 119 neg)
-
-Tests whether scoring separates immunogenic mutant peptides from their own wildtype sequences.
-
-| Scoring Method | AUC | PPV@5 | PPV@10 | PPV@20 | PPV@50 |
-|---|---|---|---|---|---|
-| BigMHC-IM | 0.619 | 0.600 | 0.600 | 0.550 | 0.660 |
-| Structural (Tier 1) | 0.419 | 1.000 | 1.000 | 1.000 | 0.980 |
-| Composite | 0.597 | 1.000 | 0.700 | 0.600 | 0.620 |
-
-### Benchmark 2: Immunogenic vs non-immunogenic mutants (120 pos / 600 neg)
-
-The harder test — all peptides are mutant-derived, sampled from the same screened patients. Tests real immunogenicity discrimination.
-
-| Scoring Method | AUC | PPV@5 | PPV@10 | PPV@20 | PPV@50 |
-|---|---|---|---|---|---|
-| **BigMHC-IM** | **0.917** | **0.800** | **0.900** | **0.900** | **0.920** |
-| Structural (Tier 1) | 0.642 | 1.000 | 1.000 | 1.000 | 0.680 |
-| Composite | 0.923 | 0.800 | 0.900 | 0.900 | 0.920 |
-
-### Benchmark 3: Full pipeline per-patient (5 patients, 7,328 candidates)
-
-The hardest test — runs the COMPLETE pipeline (MHCflurry binding + BigMHC-IM + foreignness + structural + composite ranking) on all peptide windows from each patient's screened nmers, then checks whether confirmed immunogenic peptides land in the top selections.
-
-| Patient | Candidates | Confirmed | Found | Recall@20 | Recall@50 |
-|---|---|---|---|---|---|
-| 3713 (melanoma) | 3,760 | 11 | 11/11 | 2/11 (0.18) | 3/11 (0.27) |
-| 3466 | 2,033 | 6 | 6/6 | 0/6 (0.00) | 1/6 (0.17) |
-| 3678 | 742 | 5 | 4/5 | 2/5 (0.40) | 2/5 (0.40) |
-| 2098 | 24 | 4 | 4/4 | 4/4 (1.00) | 4/4 (1.00) |
-| 4287 | 769 | 4 | 4/4 | 1/4 (0.25) | 1/4 (0.25) |
-| **Macro avg** | | | **29/30** | | **0.37** | **0.42** |
-
-**Key findings:**
-- **Recall of confirmed positives**: 29 of 30 confirmed immunogenic peptides appear somewhere in the ranked list (97% detection rate). The pipeline finds them — the question is ranking.
-- **Recall@20 = 0.37**: On average, 37% of confirmed immunogenic peptides land in the top 20. This is the core metric for vaccine design (top 20 go into the construct).
-- **Patient 2098**: Perfect recall — all 4 confirmed immunogenic peptides ranked in top 9 out of only 24 candidates. Small candidate pool helps.
-- **Patient 3713**: 11 confirmed positives from 3,760 candidates. Top 2 (TLYSLTLLY, QTNPVTLQY) ranked 13th and 19th — just inside top 20. The rest ranked 22-470 out of 3,760.
-- **Room for improvement**: Foreignness scoring (k-mer) and structural scoring (tier 1 position lookup) add limited signal. Tier 2/3 structural scoring (PANDORA/AlphaFold) and expression/CCF integration would likely improve ranking.
+- **S3 bucket**: `s3://chatnav-pipeline-data/` (~620GB cached data)
+- **GPU instance**: g6e.4xlarge (NVIDIA L40S 46GB), AlphaFold2-Multimer NIM deployed
+- **PANDORA**: Docker container with MODELLER + 864 MHC-I templates
+- New instances: `bash scripts/restore_from_s3.sh` pulls all cached data in ~5 minutes
 
 ## Known Limitations
 
-- **CCF = 1.0**: Cancer cell fraction requires PyClone-VI with BAM files (VAF + CNV data). From MAF-only input, all mutations are assumed clonal.
-- **No MHC Class II typing**: OptiType supports Class I only. Class II HLA typing requires HLA-HD (academic license).
-- **MHCflurry vs NetMHCpan**: Uses MHCflurry (Apache 2.0). The 2% binding rank threshold is calibrated against MHCflurry's own percentile distribution.
-- **LinearDesign on macOS ARM**: Requires Docker (linux/amd64) due to pre-compiled x86_64 shared libraries.
+- **CCF from MAF only**: Cancer cell fraction requires PyClone-VI with BAM files. From MAF-only input, CCF defaults to 1.0.
+- **No MHC Class II typing**: OptiType supports Class I only.
+- **MHCflurry vs NetMHCpan**: Uses MHCflurry (Apache 2.0). The 2% threshold is calibrated against MHCflurry's percentile distribution.
+- **AlphaFold2 MSA search**: Takes ~45 min per prediction due to jackhmmer against large databases. Use `predict-structure-from-msa` endpoint with pre-computed MSAs for faster inference.
 
 ## References
 
 - Albert et al. (2023). BigMHC: accurate prediction of MHC-I antigen presentation and immunogenicity. *Nature Machine Intelligence*.
+- Muller et al. (2023). Machine learning methods and harmonized datasets improve immunogenic neoantigen prediction. *Immunity*.
 - O'Donnell et al. (2020). MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides. *Cell Systems*.
 - Zhang et al. (2023). LinearDesign: Efficient algorithms for optimized mRNA sequence design. *Nature*.
-- Gartner et al. (2021). A machine learning model for ranking candidate neoantigens. *Nature Medicine*.
+- Gartner et al. (2021). A machine learning model for ranking candidate neoantigens. *Nature Cancer*.
+- Wells et al. (2020). Key Parameters of Tumor Epitope Immunogenicity. *Cell*.
 
 ## License
 
