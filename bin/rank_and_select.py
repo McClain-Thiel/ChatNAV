@@ -219,9 +219,26 @@ def main():
     df = df.sort_values('effective_rank').reset_index(drop=True)
     df['rank'] = range(1, len(df) + 1)
 
-    # ── Step 7: HLA diversity ──
+    # ── Step 7: Class balance + HLA diversity ──
+    # Ensure mix of Class I and Class II epitopes
+    # Default: at least 70% Class I (primary CD8+ targets), up to 30% Class II (CD4+ help)
     top_n = args.top_n if args.weight_profile != 'research' else len(df)
-    selected = ensure_hla_diversity(df, top_n)
+
+    if 'mhc_class' in df.columns and df['mhc_class'].nunique() > 1:
+        class_i = df[df['mhc_class'] != 'II']
+        class_ii = df[df['mhc_class'] == 'II']
+        # Always include some Class II for CD4+ help (min 3, max 30% of top_n)
+        n_class_ii = min(max(3, int(top_n * 0.15)), len(class_ii), int(top_n * 0.3))
+        n_class_i = top_n - n_class_ii
+
+        selected_i = class_i.head(n_class_i)
+        selected_ii = class_ii.head(n_class_ii) if n_class_ii > 0 else pd.DataFrame()
+        df_balanced = pd.concat([selected_i, selected_ii]).sort_values('effective_rank')
+        print(f"  Class balance: {len(selected_i)} Class I + {len(selected_ii)} Class II", file=sys.stderr)
+    else:
+        df_balanced = df
+
+    selected = ensure_hla_diversity(df_balanced, top_n)
     selected = selected.copy()
     selected['selected'] = True
 

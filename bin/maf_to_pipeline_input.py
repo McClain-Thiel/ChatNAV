@@ -310,21 +310,17 @@ def main():
 
         processed_genes.add(hugo)
 
-        if is_frameshift:
-            # For frameshifts: generate peptides from the novel reading frame
-            # Use the mutant AA at the frameshift position and continue with random downstream
-            # Actually, we need the real frameshift sequence. Since we only have the first
-            # changed AA from HGVSp, generate windows around that position.
-            windows = generate_peptide_windows(
-                protein_seq, position, mut_aa, wt_aa,
-                peptide_lengths=(8, 9, 10, 11)
-            )
-        else:
-            # Missense: generate 8-11mer windows (full MHC-I binding space)
-            windows = generate_peptide_windows(
-                protein_seq, position, mut_aa, wt_aa,
-                peptide_lengths=(8, 9, 10, 11)
-            )
+        # MHC Class I: 8-11mer windows
+        windows = generate_peptide_windows(
+            protein_seq, position, mut_aa, wt_aa,
+            peptide_lengths=(8, 9, 10, 11)
+        )
+
+        # MHC Class II: 13-17mer windows (longer peptides for DRB1/DQ/DP groove)
+        windows_ii = generate_peptide_windows(
+            protein_seq, position, mut_aa, wt_aa,
+            peptide_lengths=(13, 14, 15, 16, 17)
+        )
 
         tpm = tpm_dict.get(hugo)
         if tpm is None:
@@ -336,6 +332,7 @@ def main():
             all_peptides.append({
                 'mut_peptide': mut_pep,
                 'wt_peptide': wt_pep,
+                'mhc_class': 'I',
                 'gene': hugo,
                 'mutation': hgvsp,
                 'is_frameshift': is_frameshift,
@@ -343,21 +340,43 @@ def main():
                 'mutation_position': mut_pos_in_pep,
             })
 
-    print(f"\n  Generated {len(all_peptides)} peptide windows from {len(processed_genes)} genes",
+        # Add Class II windows
+        for mut_pep, wt_pep, mut_pos_in_pep in windows_ii:
+            all_peptides.append({
+                'mut_peptide': mut_pep,
+                'wt_peptide': wt_pep,
+                'mhc_class': 'II',
+                'gene': hugo,
+                'mutation': hgvsp,
+                'is_frameshift': is_frameshift,
+                'tpm': tpm,
+                'mutation_position': mut_pos_in_pep,
+            })
+
+    n_class_i = sum(1 for p in all_peptides if p.get('mhc_class') == 'I')
+    n_class_ii = sum(1 for p in all_peptides if p.get('mhc_class') == 'II')
+    print(f"\n  Generated {len(all_peptides)} peptide windows ({n_class_i} Class I, {n_class_ii} Class II) from {len(processed_genes)} genes",
           file=sys.stderr)
     if len(all_peptides) == 0:
         raise RuntimeError("No valid peptide windows generated — check MAF and Ensembl data")
 
-    # Deduplicate peptides (same sequence from different windows)
-    unique_peptides = {}
+    # Split by MHC class and deduplicate
+    unique_class_i = {}
+    unique_class_ii = {}
     for p in all_peptides:
         key = p['mut_peptide']
-        if key not in unique_peptides:
-            unique_peptides[key] = p
-    peptide_list = list(unique_peptides.values())
-    print(f"  Unique peptide sequences: {len(peptide_list)}", file=sys.stderr)
+        if p.get('mhc_class') == 'II':
+            if key not in unique_class_ii:
+                unique_class_ii[key] = p
+        else:
+            if key not in unique_class_i:
+                unique_class_i[key] = p
 
-    # Run MHCflurry for real binding predictions
+    peptide_list = list(unique_class_i.values())  # Class I for MHCflurry
+    peptide_list_ii = list(unique_class_ii.values())  # Class II for MHCnuggets
+    print(f"  Unique Class I: {len(peptide_list)}, Class II: {len(peptide_list_ii)}", file=sys.stderr)
+
+    # Run MHCflurry for Class I binding predictions
     mut_seqs = [p['mut_peptide'] for p in peptide_list]
 
     # Step 1: Predict mutant peptide binding (gets best HLA allele per peptide)
@@ -475,28 +494,14 @@ def main():
     class_ii_alleles = [h.strip() for h in args.hla_alleles.split(',')
                         if any(h.strip().startswith(f'HLA-D{x}') for x in ['RB', 'QB', 'PB'])]
 
-    if class_ii_alleles:
-        print(f"\n  Running MHCnuggets Class II on {len(class_ii_alleles)} alleles...", file=sys.stderr)
+    if class_ii_alleles and peptide_list_ii:
+        print(f"\n  Running MHCnuggets Class II on {len(peptide_list_ii)} peptides × {len(class_ii_alleles)} alleles...", file=sys.stderr)
         try:
             from mhcnuggets.src.predict import predict as mhcnuggets_predict
             import tempfile as _tf
 
-            # Generate 15-mer windows for Class II
-            class_ii_peps = set()
-            pep_ii_meta = {}
-            for p in peptide_list:
-                nmer = p['mut_peptide']
-                gene = p['gene']
-                mutation = p['mutation']
-                # For Class II, use longer windows (13-17mer) from the parent nmer
-                # We only have the 8-11mer windows, so generate 15-mers from the protein
-                # Use the mut_peptide neighborhood — pad from the original sequence
-                # Simplified: just use the 9-10mer + flanking from wt_peptide context
-                # Actually, for proper Class II we need the original protein context
-                # For now, skip if peptide is too short for Class II
-                if len(nmer) >= 15:
-                    class_ii_peps.add(nmer[:15])
-                    pep_ii_meta[nmer[:15]] = p
+            class_ii_peps = list(set(p['mut_peptide'] for p in peptide_list_ii))
+            pep_ii_meta = {p['mut_peptide']: p for p in peptide_list_ii}
 
             if class_ii_peps:
                 for allele in class_ii_alleles:

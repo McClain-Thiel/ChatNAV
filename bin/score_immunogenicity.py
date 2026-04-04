@@ -255,15 +255,20 @@ def main():
         else:
             foreignness = 0.5  # 8-mers can't be k-mer matched at k=9
 
-        # 3. Agretopicity
+        # 3. Agretopicity (Class I only — Class II doesn't have WT binding predictions)
+        mhc_class = str(row.get('mhc_class', 'I'))
         wt_rank = row.get('wildtype_binding_rank', None)
-        if (wt_rank is None or (isinstance(wt_rank, float) and pd.isna(wt_rank)) or wt_rank == '') and not is_frameshift:
+
+        if mhc_class == 'II':
+            # Class II: no agretopicity (no WT binding from MHCnuggets)
+            agretopicity = 5.0  # treat as maximally novel (like frameshifts)
+        elif (wt_rank is None or (isinstance(wt_rank, float) and pd.isna(wt_rank)) or wt_rank == '') and not is_frameshift:
             raise ValueError(
                 f"Peptide {peptide} is not a frameshift but has no wildtype_binding_rank. "
                 f"Provide wildtype binding data or mark as frameshift."
             )
-
-        agretopicity = compute_agretopicity(mut_rank, wt_rank)
+        else:
+            agretopicity = compute_agretopicity(mut_rank, wt_rank)
 
         results.append({
             'peptide_id': peptide,
