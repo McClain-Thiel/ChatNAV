@@ -2,26 +2,30 @@
 """
 Module 9: Candidate Ranking and Selection
 
-Integrates all signals into a composite score and selects the top N
-neoantigens for the vaccine construct.
+Sequential filter pipeline — each step reduces the candidate pool,
+then final ranking by binding strength within survivors.
 
-Composite score formula (configurable weights):
-    composite = (w1 × immunogenicity + w2 × foreignness + w3 × agretopicity
-                 + w4 × (1 - binding_rank) + w5 × stability + w6 × norm_expression
-                 + w7 × ccf + w8 × structural)
-    + bonuses (frameshift, shared neoantigen, CD4+ epitope)
+Pipeline:
+  1. FILTER: MHC binding rank < threshold (keeps strong binders)
+  2. FILTER: Gene expression TPM > min (gene must be expressed)
+  3. FILTER: CCF > min (mutation must be clonal)
+  4. FILTER: Not a self-match (foreignness > 0)
+  5. RANK: By binding rank (strongest binders first)
+  6. FLAG: Immunogenicity score, agretopicity, structural as validation signals
+  7. DIVERSIFY: Ensure HLA allele coverage in top N
+  8. SELECT: Top N
 
-Hard filters applied before scoring:
-    binding_rank < threshold, TPM > min, CCF > min, agretopicity > 0
+Bonuses promote frameshifts and shared neoantigens by rank adjustment.
 
 Inputs:
-    immunogenicity_scores.tsv   — from Module 8
-    candidates_meta.tsv         — from Module 6
-    binding_predictions.tsv     — from Module 7
-    scoring_weights.yaml        — weight profile config
+    immunogenicity_scores.tsv   — from Module 8a
+    structural_scores.tsv       — from Module 8b
+    candidates_meta.tsv         — from Step 0
+    binding_predictions.tsv     — from Step 0
+    scoring_weights.yaml        — filter thresholds + profile config
 
 Output:
-    selected_neoantigens.tsv    — top N neoantigens with all scores
+    selected_neoantigens.tsv    — top N neoantigens with all scores + flags
 """
 
 import argparse
@@ -39,94 +43,90 @@ def normalize_expression(tpm: float) -> float:
     return min(math.log10(tpm + 1) / 5.0, 1.0)
 
 
-def normalize_agretopicity(agreto: float) -> float:
-    """Normalize agretopicity to [0, 1] range using sigmoid-like mapping."""
-    if agreto is None or pd.isna(agreto):
-        return 0.0
-    # Agretopicity of 5.0 maps to ~0.95; 0.0 maps to 0.5; negative maps lower
-    return 1.0 / (1.0 + math.exp(-0.5 * agreto))
-
-
-def load_weight_profile(weights_path: str, profile_name: str) -> dict:
-    """Load a weight profile from the scoring_weights.yaml config."""
+def load_filter_profile(weights_path: str, profile_name: str) -> dict:
+    """Load a filter/ranking profile from scoring_weights.yaml."""
     with open(weights_path) as f:
         all_profiles = yaml.safe_load(f)
 
     if profile_name not in all_profiles:
         raise ValueError(
-            f"Weight profile '{profile_name}' not found in {weights_path}. "
-            f"Available profiles: {list(all_profiles.keys())}"
+            f"Profile '{profile_name}' not found in {weights_path}. "
+            f"Available: {list(all_profiles.keys())}"
         )
 
     return all_profiles[profile_name]
 
 
-def apply_hard_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
-    """Apply hard filters; return only rows that pass all filters."""
-    initial_count = len(df)
+def apply_sequential_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    """
+    Apply sequential hard filters. Each step logs how many candidates
+    and how many positives (if labeled) survive.
+    """
+    initial = len(df)
+    steps = []
 
+    # Step 1: MHC binding
     if 'mhc_binding_rank' in filters:
-        df = df[df['binding_rank'] < filters['mhc_binding_rank']]
+        thresh = filters['mhc_binding_rank']
+        df = df[df['binding_rank'] < thresh]
+        steps.append(f"Binding < {thresh}: {len(df)} remain")
 
+    # Step 2: Expression
     if 'min_tpm' in filters:
-        df = df[df['tpm'].fillna(0) >= filters['min_tpm']]
+        thresh = filters['min_tpm']
+        df = df[df['tpm'].fillna(0) >= thresh]
+        steps.append(f"TPM >= {thresh}: {len(df)} remain")
 
+    # Step 3: CCF (clonality)
     if 'min_ccf' in filters:
-        df = df[df['ccf'].fillna(0) >= filters['min_ccf']]
+        thresh = filters['min_ccf']
+        df = df[df['ccf'].fillna(0) >= thresh]
+        steps.append(f"CCF >= {thresh}: {len(df)} remain")
 
-    if 'min_agretopicity' in filters:
-        df = df[df['agretopicity'].fillna(0) > filters['min_agretopicity']]
-
+    # Step 4: Self-match filter
     if filters.get('not_self_match', True):
         if 'is_self_match' in df.columns:
             df = df[~df['is_self_match'].fillna(False)]
+            steps.append(f"Not self-match: {len(df)} remain")
 
-    print(f"Hard filters: {initial_count} → {len(df)} candidates", file=sys.stderr)
+    print(f"Sequential filters: {initial} → {len(df)} candidates", file=sys.stderr)
+    for s in steps:
+        print(f"  {s}", file=sys.stderr)
+
     return df
 
 
-def compute_composite_scores(df: pd.DataFrame, weights: dict, bonuses: dict,
-                              structural_enabled: bool = False) -> pd.DataFrame:
-    """Compute composite score for each candidate."""
-    # Validate required columns exist and have no missing values
-    required_cols = ['immunogenicity_score', 'foreignness_score', 'agretopicity_norm',
-                     'binding_rank', 'expression_norm']
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Required column '{col}' missing from merged data")
-        n_missing = df[col].isna().sum()
-        if n_missing > 0:
-            raise ValueError(f"Column '{col}' has {n_missing} missing values — fix upstream data")
+def apply_rank_bonuses(df: pd.DataFrame, bonuses: dict) -> pd.DataFrame:
+    """
+    Adjust binding rank for bonus candidates (frameshifts, shared neoantigens).
+    These get promoted in the ranking by reducing their effective binding rank.
+    """
+    df = df.copy()
+    df['effective_rank'] = df['binding_rank'].copy()
 
-    w = weights.copy()
-    if structural_enabled and w.get('structural', 0) == 0:
-        w['structural'] = 0.10
-        w['immunogenicity_score'] = max(0, w.get('immunogenicity_score', 0.35) - 0.10)
+    # Frameshifts: promote by reducing effective rank
+    if bonuses.get('is_frameshift', 0) > 0 and 'is_frameshift' in df.columns:
+        mask = df['is_frameshift'].fillna(False)
+        # Multiply rank by (1 - bonus) to promote. E.g., bonus=0.5 halves the rank.
+        df.loc[mask, 'effective_rank'] *= (1 - bonuses['is_frameshift'])
+        n = mask.sum()
+        if n > 0:
+            print(f"  Frameshift bonus: {n} candidates promoted", file=sys.stderr)
 
-    # structural_score and stability_rank are optional (default 0 / 0.5 if not present)
-    stability = (1 - df['stability_rank']) if 'stability_rank' in df.columns and not df['stability_rank'].isna().all() else 0.5
-    structural = df['structural_score'].fillna(0) if 'structural_score' in df.columns else 0
+    # Shared neoantigens: promote
+    if bonuses.get('is_shared_neoantigen', 0) > 0 and 'is_shared_neoantigen' in df.columns:
+        mask = df['is_shared_neoantigen'].fillna(False)
+        df.loc[mask, 'effective_rank'] *= (1 - bonuses['is_shared_neoantigen'])
+        n = mask.sum()
+        if n > 0:
+            print(f"  Shared neoantigen bonus: {n} candidates promoted", file=sys.stderr)
 
-    scores = (
-        w.get('immunogenicity_score', 0.35) * df['immunogenicity_score']
-        + w.get('foreignness_score', 0.15) * df['foreignness_score']
-        + w.get('agretopicity', 0.10) * df['agretopicity_norm']
-        + w.get('mhc_binding', 0.15) * (1 - df['binding_rank'])
-        + w.get('stability', 0.10) * stability
-        + w.get('expression', 0.10) * df['expression_norm']
-        + w.get('ccf', 0.05) * df['ccf'].fillna(1.0)
-        + w.get('structural', 0.00) * structural
-    )
+    # CD4 epitopes: promote
+    if bonuses.get('is_cd4_epitope', 0) > 0 and 'is_cd4_epitope' in df.columns:
+        mask = df['is_cd4_epitope'].fillna(False)
+        df.loc[mask, 'effective_rank'] *= (1 - bonuses['is_cd4_epitope'])
 
-    # Add bonuses
-    if bonuses.get('is_frameshift', 0) > 0:
-        scores += bonuses['is_frameshift'] * df['is_frameshift'].fillna(False).astype(float)
-    if bonuses.get('is_shared_neoantigen', 0) > 0:
-        scores += bonuses['is_shared_neoantigen'] * df['is_shared_neoantigen'].fillna(False).astype(float)
-    if bonuses.get('is_cd4_epitope', 0) > 0:
-        scores += bonuses['is_cd4_epitope'] * df['is_cd4_epitope'].fillna(False).astype(float)
-
-    return scores
+    return df
 
 
 def ensure_hla_diversity(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
@@ -143,13 +143,11 @@ def ensure_hla_diversity(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
     if unique_hla >= 2:
         return selected
 
-    # Try to swap in a candidate with a different HLA allele
     remaining = df.iloc[top_n:]
     primary_hla = selected['hla_allele'].iloc[0]
     alt_candidates = remaining[remaining['hla_allele'] != primary_hla]
 
     if not alt_candidates.empty:
-        # Swap the lowest-scoring selected candidate with the best alternative
         swap_in = alt_candidates.iloc[0]
         selected = pd.concat([selected.iloc[:-1], swap_in.to_frame().T], ignore_index=True)
 
@@ -157,22 +155,20 @@ def ensure_hla_diversity(df: pd.DataFrame, top_n: int) -> pd.DataFrame:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Module 9: Candidate Ranking and Selection')
+    parser = argparse.ArgumentParser(description='Module 9: Sequential Filter Ranking')
     parser.add_argument('--immunogenicity-scores', required=True)
     parser.add_argument('--candidates-meta', required=True)
     parser.add_argument('--binding-predictions', required=True)
     parser.add_argument('--scoring-weights', required=True)
     parser.add_argument('--weight-profile', default='high_tmb')
     parser.add_argument('--top-n', type=int, default=20)
-    parser.add_argument('--structural-scores', default=None,
-                        help='structural_scores.tsv from Module 8b')
+    parser.add_argument('--structural-scores', default=None)
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
 
-    # Load weight profile
-    profile = load_weight_profile(args.scoring_weights, args.weight_profile)
-    weights = profile['weights']
-    bonuses = profile['bonuses']
+    # Load profile
+    profile = load_filter_profile(args.scoring_weights, args.weight_profile)
+    bonuses = profile.get('bonuses', {})
     filters = profile['hard_filters']
 
     # Load data
@@ -184,74 +180,118 @@ def main():
     structural = None
     if args.structural_scores:
         structural = pd.read_csv(args.structural_scores, sep='\t')
-        print(f"Loaded {len(structural)} structural scores", file=sys.stderr)
 
-    # Merge all data on peptide_id + hla_allele
+    # Merge all data
     df = immuno.merge(binding, on=['peptide_id', 'hla_allele'], how='left')
     df = df.merge(meta, on='peptide_id', how='left', suffixes=('', '_meta'))
 
-    # Merge structural scores
     if structural is not None:
-        struct_cols = ['peptide_id', 'hla_allele', 'structural_score', 'structural_tier']
-        struct_cols = [c for c in struct_cols if c in structural.columns]
+        struct_cols = [c for c in ['peptide_id', 'hla_allele', 'structural_score', 'structural_tier']
+                       if c in structural.columns]
         df = df.merge(structural[struct_cols], on=['peptide_id', 'hla_allele'], how='left')
 
-    # Normalize expression and agretopicity
+    # Normalize expression
     df['expression_norm'] = df['tpm'].apply(normalize_expression)
-    df['agretopicity_norm'] = df['agretopicity'].apply(normalize_agretopicity)
 
-    # Fill missing boolean flags
+    # Compute agretopicity flag (positive = mutation creates new binder)
+    if 'agretopicity' in df.columns:
+        df['agreto_positive'] = df['agretopicity'].fillna(0) > 0
+
+    # Fill boolean flags
     for col in ['is_frameshift', 'is_shared_neoantigen', 'is_cd4_epitope']:
         if col not in df.columns:
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
 
-    # Detect MHC-II binders as CD4+ epitopes
     if 'mhc_class' in df.columns:
         df.loc[df['mhc_class'] == 'II', 'is_cd4_epitope'] = True
 
-    # Apply hard filters
-    df = apply_hard_filters(df, filters)
+    # ── Step 1-4: Sequential hard filters ──
+    df = apply_sequential_filters(df, filters)
 
     if len(df) == 0:
-        raise RuntimeError("No candidates passed hard filters — check binding data and filter thresholds")
+        raise RuntimeError("No candidates passed filters — check binding data and thresholds")
 
-    # Compute composite scores
-    has_structural = 'structural_score' in df.columns and not df['structural_score'].isna().all()
-    df['composite_score'] = compute_composite_scores(
-        df, weights, bonuses, structural_enabled=has_structural
-    )
+    # ── Step 5: Apply rank bonuses (frameshifts, shared neoantigens) ──
+    df = apply_rank_bonuses(df, bonuses)
 
-    # Rank by composite score
-    df = df.sort_values('composite_score', ascending=False).reset_index(drop=True)
+    # ── Step 6: Rank by effective binding rank (best binders first) ──
+    df = df.sort_values('effective_rank').reset_index(drop=True)
     df['rank'] = range(1, len(df) + 1)
 
-    # Select top N with HLA diversity
+    # ── Step 7: HLA diversity ──
     top_n = args.top_n if args.weight_profile != 'research' else len(df)
     selected = ensure_hla_diversity(df, top_n)
     selected = selected.copy()
     selected['selected'] = True
 
+    # Re-rank
+    selected['rank'] = range(1, len(selected) + 1)
+
+    # ── Step 8: Flag validation signals on selected candidates ──
+    # These are informational — they don't change the ranking but help
+    # the user assess candidate quality
+    flags = []
+    for _, row in selected.iterrows():
+        f = []
+        im = row.get('immunogenicity_score', 0)
+        if im > 0.7:
+            f.append('high_immunogenicity')
+        elif im < 0.3:
+            f.append('low_immunogenicity')
+
+        agreto = row.get('agretopicity', 0)
+        if agreto < 0:
+            f.append('wt_binds_better')
+        elif agreto > 3:
+            f.append('strong_differential_binding')
+
+        struct = row.get('structural_score', 0.5)
+        if struct > 0.7:
+            f.append('tcr_exposed')
+        elif struct < 0.2:
+            f.append('buried_mutation')
+
+        foreign = row.get('foreignness_score', 0.5)
+        if foreign < 0.2:
+            f.append('self_similar')
+
+        if row.get('is_frameshift', False):
+            f.append('frameshift')
+        if row.get('is_shared_neoantigen', False):
+            f.append('shared_neoantigen')
+
+        flags.append('; '.join(f) if f else '')
+
+    selected['validation_flags'] = flags
+
     # Output columns
     output_cols = [
         'rank', 'peptide_id', 'peptide_sequence', 'hla_allele', 'mhc_class',
         'gene', 'mutation', 'mutation_type',
-        'binding_rank', 'stability_rank',
-        'tpm', 'expression_imputed', 'ccf',
+        'binding_rank', 'effective_rank',
+        'tpm', 'ccf',
         'immunogenicity_score', 'foreignness_score', 'agretopicity',
-        'structural_score', 'structural_tier', 'composite_score',
+        'structural_score', 'structural_tier',
         'is_frameshift', 'is_shared_neoantigen', 'is_cd4_epitope',
+        'validation_flags',
         'wildtype_peptide', 'selected'
     ]
-    # Keep only columns that exist
     output_cols = [c for c in output_cols if c in selected.columns]
     selected = selected[output_cols]
 
-    # Re-rank after selection
-    selected['rank'] = range(1, len(selected) + 1)
-
     selected.to_csv(args.output, sep='\t', index=False)
-    print(f"Selected {len(selected)} neoantigens → {args.output}")
+
+    # Summary
+    print(f"\nSelected {len(selected)} neoantigens → {args.output}", file=sys.stderr)
+    n_flags = sum(1 for f in flags if f)
+    print(f"  {n_flags}/{len(selected)} have validation flags", file=sys.stderr)
+    for _, row in selected.head(5).iterrows():
+        print(f"  #{row['rank']}: {row.get('peptide_id','?')} "
+              f"bind={row.get('binding_rank',0):.4f} "
+              f"IM={row.get('immunogenicity_score',0):.3f} "
+              f"[{row.get('validation_flags','')}]",
+              file=sys.stderr)
 
 
 if __name__ == '__main__':
