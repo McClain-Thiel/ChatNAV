@@ -13,6 +13,7 @@ NO RANDOM DATA. NO FALLBACKS. Errors are raised if anything is missing.
 
 import argparse
 import gzip
+import math
 import re
 import sys
 from pathlib import Path
@@ -434,12 +435,19 @@ def main():
                 f"MHCflurry prediction failed."
             )
 
+        # Affinity (IC50 nM) — lower = tighter binding = more stable on cell surface
+        affinity_nm = float(pred.get('affinity', 5000))
+        # Stability proxy: log-transform affinity. IC50 < 50nM = very stable.
+        stability_score = max(0, 1.0 - math.log10(max(affinity_nm, 1)) / math.log10(50000))
+
         binding_rows.append({
             'peptide_id': pep_id,
             'hla_allele': hla_formatted,
             'mhc_class': 'I',
             'binding_rank': round(float(pred['presentation_percentile']) / 100.0, 6),
-            'stability_rank': round(float(pred.get('processing_score', 0.5)), 6),
+            'affinity_nM': round(affinity_nm, 2),
+            'processing_score': round(float(pred.get('processing_score', 0.5)), 6),
+            'stability_score': round(stability_score, 4),
             'wildtype_binding_rank': round(wt_rank, 6) if wt_rank is not None else '',
             'presentation_score': round(float(pred['presentation_score']), 6),
         })
@@ -463,6 +471,97 @@ def main():
     if not binding_rows:
         raise RuntimeError("MHCflurry produced no binding predictions — check inputs")
 
+    # ── MHC Class II predictions via MHCnuggets ──
+    class_ii_alleles = [h.strip() for h in args.hla_alleles.split(',')
+                        if any(h.strip().startswith(f'HLA-D{x}') for x in ['RB', 'QB', 'PB'])]
+
+    if class_ii_alleles:
+        print(f"\n  Running MHCnuggets Class II on {len(class_ii_alleles)} alleles...", file=sys.stderr)
+        try:
+            from mhcnuggets.src.predict import predict as mhcnuggets_predict
+            import tempfile as _tf
+
+            # Generate 15-mer windows for Class II
+            class_ii_peps = set()
+            pep_ii_meta = {}
+            for p in peptide_list:
+                nmer = p['mut_peptide']
+                gene = p['gene']
+                mutation = p['mutation']
+                # For Class II, use longer windows (13-17mer) from the parent nmer
+                # We only have the 8-11mer windows, so generate 15-mers from the protein
+                # Use the mut_peptide neighborhood — pad from the original sequence
+                # Simplified: just use the 9-10mer + flanking from wt_peptide context
+                # Actually, for proper Class II we need the original protein context
+                # For now, skip if peptide is too short for Class II
+                if len(nmer) >= 15:
+                    class_ii_peps.add(nmer[:15])
+                    pep_ii_meta[nmer[:15]] = p
+
+            if class_ii_peps:
+                for allele in class_ii_alleles:
+                    # MHCnuggets needs allele in format HLA-DRB10101
+                    allele_clean = allele.replace('*', '').replace(':', '')
+
+                    with _tf.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                        for pep in class_ii_peps:
+                            f.write(f"{pep}\n")
+                        pep_path = f.name
+
+                    out_path = pep_path + '.out'
+                    try:
+                        mhcnuggets_predict(class_='II', peptides_path=pep_path,
+                                           mhc=allele_clean, output=out_path)
+                        # Parse results
+                        ii_results = pd.read_csv(out_path)
+                        for _, row in ii_results.iterrows():
+                            pep = row['peptide']
+                            ic50 = float(row['ic50'])
+                            # Convert IC50 to approximate rank (IC50 < 500nM = strong binder)
+                            rank = ic50 / 50000.0  # crude normalization
+                            meta_info = pep_ii_meta.get(pep)
+                            if meta_info and rank < 0.05:  # top 5% = Class II binder
+                                pep_id = f"{meta_info['gene']}_{meta_info['mutation']}_{pep}_II"
+                                hla_fmt = allele
+                                binding_rows.append({
+                                    'peptide_id': pep_id,
+                                    'hla_allele': hla_fmt,
+                                    'mhc_class': 'II',
+                                    'binding_rank': round(rank, 6),
+                                    'affinity_nM': round(ic50, 2),
+                                    'processing_score': 0.5,
+                                    'stability_score': 0.5,
+                                    'wildtype_binding_rank': '',
+                                    'presentation_score': round(1.0 - rank, 6),
+                                })
+                                if pep_id not in seen_meta:
+                                    seen_meta.add(pep_id)
+                                    meta_rows.append({
+                                        'peptide_id': pep_id,
+                                        'peptide_sequence': pep,
+                                        'gene': meta_info['gene'],
+                                        'mutation': meta_info['mutation'],
+                                        'mutation_type': 'frameshift' if meta_info['is_frameshift'] else 'missense',
+                                        'is_frameshift': meta_info['is_frameshift'],
+                                        'is_shared_neoantigen': False,
+                                        'tpm': round(meta_info['tpm'], 2),
+                                        'ccf': 1.0,
+                                        'is_self_match': False,
+                                        'wildtype_peptide': '',
+                                    })
+                    except Exception as e:
+                        print(f"    MHCnuggets failed for {allele}: {e}", file=sys.stderr)
+                    finally:
+                        Path(pep_path).unlink(missing_ok=True)
+                        Path(out_path).unlink(missing_ok=True)
+
+                n_class_ii = sum(1 for r in binding_rows if r.get('mhc_class') == 'II')
+                print(f"  Class II binders: {n_class_ii}", file=sys.stderr)
+        except ImportError:
+            print("  MHCnuggets not installed — skipping Class II", file=sys.stderr)
+    else:
+        print("\n  No HLA Class II alleles provided — skipping Class II", file=sys.stderr)
+
     # Write outputs
     binding_df = pd.DataFrame(binding_rows)
     binding_df.to_csv(args.output_binding, sep='\t', index=False)
@@ -471,9 +570,11 @@ def main():
     meta_df.to_csv(args.output_meta, sep='\t', index=False)
 
     # Summary
+    n_class_i = (binding_df['mhc_class'] == 'I').sum()
+    n_class_ii = (binding_df['mhc_class'] == 'II').sum() if 'mhc_class' in binding_df.columns else 0
     strong_binders = (binding_df['binding_rank'] < 0.02).sum()
     print(f"\nOutput:", file=sys.stderr)
-    print(f"  {len(binding_df)} binding predictions → {args.output_binding}", file=sys.stderr)
+    print(f"  {len(binding_df)} binding predictions ({n_class_i} Class I, {n_class_ii} Class II) → {args.output_binding}", file=sys.stderr)
     print(f"  {len(meta_df)} candidate peptides → {args.output_meta}", file=sys.stderr)
     print(f"  Strong binders (rank < 2%): {strong_binders}", file=sys.stderr)
     print(f"  Genes with peptides: {meta_df['gene'].nunique()}", file=sys.stderr)

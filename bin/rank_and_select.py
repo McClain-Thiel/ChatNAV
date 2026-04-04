@@ -256,6 +256,21 @@ def main():
         if foreign < 0.2:
             f.append('self_similar')
 
+        # Stability: affinity < 50nM = very stable pMHC complex
+        affinity = row.get('affinity_nM', 5000)
+        if isinstance(affinity, (int, float)) and not pd.isna(affinity):
+            if affinity < 50:
+                f.append('very_stable_pMHC')
+            elif affinity < 500:
+                f.append('stable_pMHC')
+            elif affinity > 5000:
+                f.append('weak_binding')
+
+        # Class II CD4+ helper epitope
+        mhc_class = row.get('mhc_class', 'I')
+        if str(mhc_class) == 'II':
+            f.append('CD4_helper_epitope')
+
         if row.get('is_frameshift', False):
             f.append('frameshift')
         if row.get('is_shared_neoantigen', False):
@@ -269,7 +284,7 @@ def main():
     output_cols = [
         'rank', 'peptide_id', 'peptide_sequence', 'hla_allele', 'mhc_class',
         'gene', 'mutation', 'mutation_type',
-        'binding_rank', 'effective_rank',
+        'binding_rank', 'effective_rank', 'affinity_nM', 'processing_score', 'stability_score',
         'tpm', 'ccf',
         'immunogenicity_score', 'foreignness_score', 'agretopicity',
         'structural_score', 'structural_tier',

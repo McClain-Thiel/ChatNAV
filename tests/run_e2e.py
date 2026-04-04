@@ -80,7 +80,7 @@ def main():
         run_step('maf_to_pipeline_input.py', [
             '--maf', str(maf_path),
             '--expression', str(expr_path),
-            '--hla-alleles', 'HLA-A*02:01,HLA-A*01:01,HLA-B*07:02,HLA-B*44:03,HLA-C*07:02,HLA-C*05:01',
+            '--hla-alleles', 'HLA-A*02:01,HLA-A*01:01,HLA-B*07:02,HLA-B*44:03,HLA-C*07:02,HLA-C*05:01,HLA-DRB1*01:01,HLA-DRB1*04:01',
             '--max-mutations', '50',
             '--output-binding', str(binding_path),
             '--output-meta', str(meta_path),
