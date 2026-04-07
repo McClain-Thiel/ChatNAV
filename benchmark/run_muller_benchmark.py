@@ -403,6 +403,110 @@ def score_mutations(df):
     wt_ranks = pd.to_numeric(df[wt_rank_col], errors='coerce').fillna(50)
     df['diff_agreto'] = ((mut_ranks < 0.5) & (wt_ranks > 2.0)).astype(float)
 
+    # ── EXP-010: IMPROVE hydrophobicity features ──
+    # Kyte-Doolittle hydrophobicity scale
+    KD_HYDRO = {
+        'A': 1.8, 'C': 2.5, 'D': -3.5, 'E': -3.5, 'F': 2.8,
+        'G': -0.4, 'H': -3.2, 'I': 4.5, 'K': -3.9, 'L': 3.8,
+        'M': 1.9, 'N': -3.5, 'P': -1.6, 'Q': -3.5, 'R': -4.5,
+        'S': -0.8, 'T': -0.7, 'V': 4.2, 'W': -0.9, 'Y': -1.3,
+    }
+    HYDRO_AROMATIC = set('FYWILVM')  # hydrophobic + aromatic residues
+
+    hydro_core_scores = []
+    prop_hydro_aro_scores = []
+    for idx, row in df.iterrows():
+        best_pep = row.get('best_pep', '')
+        if not best_pep or not isinstance(best_pep, str) or len(best_pep) < 8:
+            hydro_core_scores.append(0.0)
+            prop_hydro_aro_scores.append(0.0)
+            continue
+
+        pep_len = len(best_pep)
+        # Binding core positions 4-7 (0-indexed: 3-6) for 9-mers
+        # Adjust for other lengths: central 4 residues
+        if pep_len == 9:
+            core_start, core_end = 3, 7
+        elif pep_len == 8:
+            core_start, core_end = 2, 6
+        elif pep_len == 10:
+            core_start, core_end = 3, 7
+        else:  # 11-mer
+            core_start, core_end = 4, 8
+
+        core = best_pep[core_start:core_end]
+
+        # HydroCore: mean hydrophobicity of binding core positions
+        hydro_vals = [KD_HYDRO.get(aa, 0.0) for aa in core]
+        hydro_mean = sum(hydro_vals) / len(hydro_vals) if hydro_vals else 0.0
+        # Normalize to [0, 1]: KD range is [-4.5, 4.5]
+        hydro_norm = (hydro_mean + 4.5) / 9.0
+        hydro_core_scores.append(hydro_norm)
+
+        # PropHydroAro: proportion of hydrophobic+aromatic in core
+        prop = sum(1 for aa in core if aa in HYDRO_AROMATIC) / len(core)
+        prop_hydro_aro_scores.append(prop)
+
+    df['hydro_core'] = hydro_core_scores
+    df['prop_hydro_aro'] = prop_hydro_aro_scores
+
+    # ── EXP-011: Gene oncogenicity flag ──
+    # Use Intogen driver annotations from the dataset
+    if 'gene_driver_Intogen' in df.columns:
+        df['is_driver_gene'] = df['gene_driver_Intogen'].fillna('').str.contains(
+            'TUMOR DRIVER|OTHER TUMOR DRIVER', regex=True
+        ).astype(float)
+    else:
+        df['is_driver_gene'] = 0.0
+
+    if 'mutation_driver_statement_Intogen' in df.columns:
+        df['is_known_driver_mut'] = df['mutation_driver_statement_Intogen'].fillna('').str.contains(
+            'KNOWN DRIVER|PREDICTED DRIVER', regex=True
+        ).astype(float)
+    else:
+        df['is_known_driver_mut'] = 0.0
+
+    # ── EXP-012: HLA presentation hotspot — is mutation at TCR-facing position? ──
+    from structural_scoring import TCR_FACING_POSITIONS, POSITION_WEIGHTS_9MER
+    tcr_facing_scores = []
+    for idx, row in df.iterrows():
+        best_pep = row.get('best_pep', '')
+        wt_seq = str(row.get('wt_seq', ''))
+        mut_seq = str(row.get('mutant_seq', ''))
+
+        if not best_pep or not isinstance(best_pep, str) or len(best_pep) < 8:
+            tcr_facing_scores.append(0.0)
+            continue
+
+        pep_len = len(best_pep)
+        tcr_positions = TCR_FACING_POSITIONS.get(pep_len, set())
+
+        # Find where the mutation is in the best peptide
+        # Try to find the best_pep window in mutant_seq to get the wt equivalent
+        if mut_seq != 'nan' and wt_seq != 'nan' and best_pep in mut_seq:
+            start = mut_seq.index(best_pep)
+            wt_window = wt_seq[start:start + pep_len] if len(wt_seq) >= start + pep_len else ''
+            if wt_window and len(wt_window) == pep_len:
+                mut_positions = [i for i in range(pep_len) if best_pep[i] != wt_window[i]]
+            else:
+                mut_positions = list(range(pep_len))  # unknown → assume all
+        else:
+            mut_positions = list(range(pep_len))
+
+        # Score: max TCR-facing weight at any mutation position
+        if mut_positions and tcr_positions:
+            # Use position weights for 9-mers, binary for others
+            if pep_len == 9:
+                score = max(POSITION_WEIGHTS_9MER.get(p, 0.0) for p in mut_positions)
+            else:
+                score = 1.0 if any(p in tcr_positions for p in mut_positions) else 0.0
+        else:
+            score = 0.0
+
+        tcr_facing_scores.append(score)
+
+    df['tcr_facing'] = tcr_facing_scores
+
     timings['aggregation'] = time.time() - t0
 
     return df, timings
@@ -506,6 +610,11 @@ def write_artifacts(df, config, timings, output_dir, n_bootstrap, seed):
         'struct_best': 'Structural T1',
         'ccf_val': 'CCF',
         'diff_agreto': 'Diff Agretopicity',
+        'hydro_core': 'HydroCore (IMPROVE)',
+        'prop_hydro_aro': 'PropHydroAro (IMPROVE)',
+        'is_driver_gene': 'Driver Gene (Intogen)',
+        'is_known_driver_mut': 'Known Driver Mut',
+        'tcr_facing': 'TCR-Facing Position',
         'composite': 'Composite',
     }
     feature_aucs = {}
@@ -615,12 +724,20 @@ def main():
             patients = sorted(df['patient'].unique())[:args.max_patients]
             df = df[df['patient'].isin(patients)]
         # Recompute derived columns if missing from cache
-        if 'diff_agreto' not in df.columns:
-            mut_rank_col = 'MIN_MUT_RANK_CI_PRIME' if 'MIN_MUT_RANK_CI_PRIME' in df.columns else 'MIN_MUT_RANK_CI_MIXMHC'
-            wt_rank_col = 'WT_BEST_RANK_CI_PRIME' if 'WT_BEST_RANK_CI_PRIME' in df.columns else 'WT_BEST_RANK_CI_MIXMHC'
-            mut_ranks = pd.to_numeric(df[mut_rank_col], errors='coerce').fillna(50)
-            wt_ranks = pd.to_numeric(df[wt_rank_col], errors='coerce').fillna(50)
-            df['diff_agreto'] = ((mut_ranks < 0.5) & (wt_ranks > 2.0)).astype(float)
+        # (cache may be from older code that didn't compute these)
+        needs_rescore = any(col not in df.columns for col in
+                           ['diff_agreto', 'hydro_core', 'prop_hydro_aro',
+                            'is_driver_gene', 'tcr_facing'])
+        if needs_rescore:
+            print("  Recomputing derived features missing from cache...")
+            df, _ = score_mutations.__wrapped__(df) if hasattr(score_mutations, '__wrapped__') else (df, {})
+            # Fallback: just compute the missing ones inline
+            if 'diff_agreto' not in df.columns:
+                mut_rank_col = 'MIN_MUT_RANK_CI_PRIME' if 'MIN_MUT_RANK_CI_PRIME' in df.columns else 'MIN_MUT_RANK_CI_MIXMHC'
+                wt_rank_col = 'WT_BEST_RANK_CI_PRIME' if 'WT_BEST_RANK_CI_PRIME' in df.columns else 'WT_BEST_RANK_CI_MIXMHC'
+                mut_ranks = pd.to_numeric(df[mut_rank_col], errors='coerce').fillna(50)
+                wt_ranks = pd.to_numeric(df[wt_rank_col], errors='coerce').fillna(50)
+                df['diff_agreto'] = ((mut_ranks < 0.5) & (wt_ranks > 2.0)).astype(float)
         timings = {}
         timings['total'] = 0.0
     else:
@@ -660,6 +777,12 @@ def main():
     print_metrics("CCF", labels, df['ccf_val'].values)
     if 'diff_agreto' in df.columns:
         print_metrics("Diff agretopicity", labels, df['diff_agreto'].values)
+    for col, name in [('hydro_core', 'HydroCore (IMPROVE)'),
+                       ('prop_hydro_aro', 'PropHydroAro (IMPROVE)'),
+                       ('is_driver_gene', 'Driver gene (Intogen)'),
+                       ('tcr_facing', 'TCR-facing position')]:
+        if col in df.columns:
+            print_metrics(name, labels, df[col].values)
     print_metrics("Our composite (ALL signals, best window)", labels, df['composite'].values)
 
     # Bootstrap macro Recall@20

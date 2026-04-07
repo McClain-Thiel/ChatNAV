@@ -1,0 +1,18 @@
+bonuses:
+  is_cd4_epitope: 0.1
+  is_frameshift: 0.5
+  is_shared_neoantigen: 0.3
+composite_weights:
+  agreto_norm: 0.1
+  bigmhc_best: 0.3
+  binding_score: 0.15
+  ccf_val: 0.1
+  expr_norm: 0.1
+  foreign_best: 0.15
+  struct_best: 0.0
+  tcr_facing: 0.1
+hard_filters:
+  mhc_binding_rank: 0.02
+  min_ccf: 0.3
+  min_tpm: 1.0
+  not_self_match: true

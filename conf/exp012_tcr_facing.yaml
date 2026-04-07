@@ -1,0 +1,24 @@
+# EXP-012: Add TCR-facing position feature
+# Hypothesis: Mutations at TCR-facing positions (P4-P7 for 9-mers) are more
+# likely to be recognized by T cells. Muller/Gfeller showed this is predictive.
+# Replace struct_best (AUC 0.489) with tcr_facing.
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 1.0
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1
+  composite_weights:
+    bigmhc_best: 0.30
+    foreign_best: 0.15
+    agreto_norm: 0.10
+    binding_score: 0.15
+    expr_norm: 0.10
+    struct_best: 0.00        # replaced
+    ccf_val: 0.10
+    tcr_facing: 0.10         # new

@@ -1,0 +1,24 @@
+# EXP-011: Add gene oncogenicity flag from Intogen
+# Hypothesis: Mutations in driver genes are more likely immunogenic because
+# they are functionally constrained (the tumor needs them).
+# Add 0.05 weight from foreignness (weakest signal).
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 1.0
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1
+  composite_weights:
+    bigmhc_best: 0.30
+    foreign_best: 0.10       # was 0.15
+    agreto_norm: 0.10
+    binding_score: 0.15
+    expr_norm: 0.10
+    struct_best: 0.10
+    ccf_val: 0.10
+    is_driver_gene: 0.05     # new

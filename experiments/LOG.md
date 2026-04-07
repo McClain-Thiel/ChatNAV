@@ -84,3 +84,50 @@
 - **Result:** No accuracy impact. Cache file verified on GPU instance.
 - **Decision:** Keep (engineering improvement)
 - **Commit:** pending
+
+## EXP-010: Add IMPROVE hydrophobicity features (HydroCore + PropHydroAro)
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 2)
+- **Hypothesis:** Hydrophobic residues at binding core positions 4-7 drive TCR recognition (biggest single IMPROVE signal).
+- **Change:** `benchmark/run_muller_benchmark.py`: compute `hydro_core` (mean Kyte-Doolittle hydrophobicity of core positions, normalized to [0,1]) and `prop_hydro_aro` (proportion of FYWILVM in core). `conf/exp010_improve.yaml`: 0.05 weight each, taken from foreignness and structural.
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4484 [0.3502, 0.5521]
+- **Feature AUCs:** HydroCore 0.540, PropHydroAro 0.547 (individually weak but strong in combination)
+- **Per-patient:** 7 improved, 3 degraded
+- **Decision:** INVESTIGATE — +3.4 points, CIs overlap. Include in reranker.
+
+## EXP-011: Add gene oncogenicity flag from Intogen
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 2)
+- **Hypothesis:** Mutations in driver genes are functionally constrained, more likely immunogenic.
+- **Change:** `benchmark/run_muller_benchmark.py`: compute `is_driver_gene` and `is_known_driver_mut` from Intogen annotations. `conf/exp011_oncogene.yaml`: 0.05 weight for driver gene.
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4241 [0.3192, 0.5291]
+- **Feature AUCs:** is_driver_gene 0.545, is_known_driver_mut 0.531
+- **Per-patient:** 3 improved, 0 degraded
+- **Decision:** DISCARD as standalone (+1.0 point, within noise). Include in reranker feature set.
+
+## EXP-012: Add TCR-facing position feature
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 2)
+- **Hypothesis:** Mutations at TCR-facing positions (P4-P7 for 9-mers) are more likely recognized.
+- **Change:** `benchmark/run_muller_benchmark.py`: compute `tcr_facing` using position weights from structural_scoring.py. `conf/exp012_tcr_facing.yaml`: 0.10 weight replacing struct_best.
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4543 [0.3515, 0.5641]
+- **Feature AUC:** tcr_facing 0.494 (individually near chance, but captures position information)
+- **Per-patient:** 5 improved, 2 degraded, 1 tanked
+- **Decision:** INVESTIGATE — +4.0 points. Include in reranker.
+
+## EXP-013: LightGBM reranker with all features
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 2)
+- **Hypothesis:** A learned reranker combining all 13 features will outperform the hand-tuned composite by finding nonlinear interactions.
+- **Change:** Leave-one-patient-out CV LightGBM (num_leaves=15, max_depth=4, lr=0.05, n_estimators=200, is_unbalance=True). 13 features: bigmhc_best, binding_score, expr_norm, foreign_best, agreto_norm, ccf_val, struct_best, diff_agreto, hydro_core, prop_hydro_aro, is_driver_gene, is_known_driver_mut, tcr_facing.
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.5993 [0.4938, 0.6937] (**+18.5 points**)
+- **Result (dev, R@50):** Recall@50 = 0.8859 [0.8219, 0.9429] (+11.9 points)
+- **CV AUC:** 0.776 (leave-one-patient-out)
+- **Per-patient:** 25 improved, 35 unchanged, 8 degraded, 5 tanked
+- **Top features (importance):** BigMHC-IM (390), expression (388), HydroCore (313), agretopicity (299), CCF (274), binding (224)
+- **Decision:** INVESTIGATE — CIs overlap (candidate lower 0.494 < baseline upper 0.521) but point delta +0.185 is very large. 5 tanked patients are all 1-positive-in-large-pool cases. Promote to muller-val.
+- **Commit:** pending

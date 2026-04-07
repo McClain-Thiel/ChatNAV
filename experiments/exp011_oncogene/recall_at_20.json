@@ -1,0 +1,9 @@
+{
+  "metric": "macro_recall_at_20",
+  "point_estimate": 0.4241,
+  "ci_lower": 0.3192,
+  "ci_upper": 0.5291,
+  "n_bootstrap": 1000,
+  "bootstrap_seed": 42,
+  "n_patients": 68
+}

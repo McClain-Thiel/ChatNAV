@@ -1,0 +1,25 @@
+# EXP-010: Add IMPROVE hydrophobicity features (HydroCore + PropHydroAro)
+# Hypothesis: Hydrophobic residues at binding core positions 4-7 drive TCR
+# recognition. IMPROVE paper found this was the single biggest signal.
+# Redistribute weight from foreignness (AUC 0.478) and structural (AUC 0.489).
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 1.0
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1
+  composite_weights:
+    bigmhc_best: 0.30
+    foreign_best: 0.10       # was 0.15
+    agreto_norm: 0.10
+    binding_score: 0.15
+    expr_norm: 0.10
+    struct_best: 0.05        # was 0.10
+    ccf_val: 0.10
+    hydro_core: 0.05         # new
+    prop_hydro_aro: 0.05     # new

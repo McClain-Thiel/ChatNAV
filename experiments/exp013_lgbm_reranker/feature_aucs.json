@@ -1,0 +1,16 @@
+{
+  "bigmhc_best": 0.5624,
+  "binding_score": 0.7346,
+  "expr_norm": 0.7372,
+  "foreign_best": 0.4778,
+  "agreto_norm": 0.5942,
+  "ccf_val": 0.556,
+  "struct_best": 0.4885,
+  "diff_agreto": 0.5003,
+  "hydro_core": 0.5398,
+  "prop_hydro_aro": 0.5467,
+  "is_driver_gene": 0.5446,
+  "is_known_driver_mut": 0.5311,
+  "tcr_facing": 0.4941,
+  "lgbm_score": 0.7575
+}

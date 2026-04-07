@@ -1,0 +1,15 @@
+{
+  "bigmhc_best": 390,
+  "binding_score": 224,
+  "expr_norm": 388,
+  "foreign_best": 27,
+  "agreto_norm": 299,
+  "ccf_val": 274,
+  "struct_best": 89,
+  "diff_agreto": 8,
+  "hydro_core": 313,
+  "prop_hydro_aro": 58,
+  "is_driver_gene": 19,
+  "is_known_driver_mut": 62,
+  "tcr_facing": 22
+}
