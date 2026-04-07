@@ -166,4 +166,18 @@
 - **Decision:** INVESTIGATE on dev. Promoted to muller-val.
 - **muller-val result:** Recall@20 = 0.6638 [0.5287, 0.7874] vs EXP-013 val 0.5982 [0.4515, 0.7563] → delta +0.066. Val AUC 0.827 (up from 0.758). Holds and improves on held-out data.
 - **Final decision:** Best model so far. New baseline for future experiments. Next: Gartner at release time.
+- **Commit:** cc1da95
+
+## EXP-040: Structural scoring ablation
+- **Date:** 2026-04-07
+- **Branch:** main
+- **Hypothesis:** Tier 1 structural scoring (position lookup, AUC 0.489) and TCR-facing position (AUC 0.494) may be noise in the reranker. If lift < 2 points, demote from default path and do not invest in Tier 3 (AlphaFold2).
+- **Change:** Ablation study — remove struct_best, tcr_facing, or both from EXP-022's 27-feature LightGBM reranker.
+- **Baseline (dev):** EXP-022 R@20 = 0.7262 [0.6350, 0.8103]
+- **Results (dev):**
+  - Drop struct_best: R@20 = 0.7294 (+0.003) — removing it *helps*
+  - Drop tcr_facing: R@20 = 0.7108 (-0.015) — within noise
+  - Drop both: R@20 = 0.7289 (+0.003) — no loss at all
+- **Feature AUCs:** struct_best 0.489 (below chance), tcr_facing 0.494 (chance)
+- **Decision:** Demote Tier 1 from default path. Do NOT invest in Tier 3 (AlphaFold2). Reclaim GPU budget. Structural scoring remains available in 'research' profile only.
 - **Commit:** pending

@@ -2,6 +2,11 @@
 #
 # Architecture: sequential hard filters → rank by binding → bonus adjustments
 # No weighted composite — each filter is pass/fail, ranking is by binding strength
+#
+# Note: Structural scoring (Tier 1 position lookup) was demoted from default
+# path after EXP-040 ablation showed AUC 0.489 (below chance) and removing it
+# improved Recall@20 by +0.003. Only enabled in 'research' profile.
+# AlphaFold2 Tier 3 investment deferred — no evidence of lift.
 
 high_tmb:
   # Melanoma, NSCLC — abundant neoantigens, standard thresholds
