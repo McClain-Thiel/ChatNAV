@@ -71,7 +71,7 @@ Three converging technologies make this pipeline tractable today:
 
 The weak link is **immunogenicity prediction** — predicting which MHC-binding peptides will actually activate T cells. Current SOTA (DeepImmuno, PRIME2.0, BigMHC) achieves ~PPV 0.37 on curated benchmarks. This is workable in practice because we encode 15-20 neoantigens per vaccine: even at PPV 0.37, the probability of zero immunogenic hits in 20 candidates is <0.002%.
 
-The immunogenicity scoring module (Module 8) is explicitly designed as the hot-swappable research surface of this system. The current implementation uses DeepImmuno-CNN (open source, no license restrictions) as the primary model.
+The immunogenicity scoring module (Module 8) is explicitly designed as the hot-swappable research surface of this system. The current implementation uses BigMHC-IM (ensemble of 7 transformer models) as the primary immunogenicity predictor, replacing the earlier DeepImmuno-CNN. A LightGBM reranker (EXP-013) combines 13 features for candidate ranking.
 
 ### 2.4 Key scientific decisions
 

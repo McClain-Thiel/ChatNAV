@@ -131,6 +131,6 @@ class TestLoadSignalSequences:
             assert 'mitd' in seqs
             assert seqs['signal_peptide'] == 'METDTLLLWVLLLWVPGSTGD'
 
-    def test_missing_file_defaults(self):
-        seqs = load_signal_sequences('/nonexistent/file.fasta')
-        assert seqs['signal_peptide'] == SIGNAL_PEPTIDE
+    def test_missing_file_raises(self):
+        with pytest.raises(FileNotFoundError):
+            load_signal_sequences('/nonexistent/file.fasta')

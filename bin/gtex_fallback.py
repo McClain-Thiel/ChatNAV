@@ -35,7 +35,7 @@ def main():
             f"Tumor type '{tumor_type}' not found in GTEx table. "
             f"Available: {available}"
         )
-        gtex['tpm'] = gtex[tumor_type]
+    gtex['tpm'] = gtex[tumor_type]
 
     result = gtex[['gene_id', 'gene_name', 'tpm']].copy()
     result['imputed'] = True

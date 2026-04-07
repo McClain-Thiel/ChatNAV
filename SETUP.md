@@ -9,25 +9,22 @@ Everything needed to reproduce this environment from scratch.
 - Python 3.11+
 - 16GB+ RAM (MHCflurry models + proteome k-mer index)
 - ~5GB disk (models + reference data)
+- GPU recommended for BigMHC-IM scoring (works on CPU but slower)
 
 ## Python Dependencies
 
 ```bash
-# Core
-pip install pandas numpy biopython scipy pyyaml requests
+# Core pipeline
+pip install pandas numpy biopython scipy pyyaml requests scikit-learn
 
 # MHC Binding — MHCflurry 2.x (Apache 2.0)
 pip install mhcflurry
 mhcflurry-downloads fetch models_class1_presentation   # ~135MB download
 
-# If mhcflurry-downloads not on PATH:
-# /path/to/python/bin/mhcflurry-downloads fetch models_class1_presentation
+# Immunogenicity — BigMHC-IM (primary, PyTorch-based)
+pip install git+https://github.com/griffithlab/bigmhc.git
 
-# Immunogenicity — TensorFlow (for DeepImmuno-CNN)
-# macOS: must use tensorflow 2.15.x (newer versions crash on macOS)
-pip install "tensorflow==2.15.1"
-
-# Protein sequence lookup
+# Protein sequence lookup — Ensembl release 110 (pinned)
 pip install pyensembl
 python -c "
 import pyensembl
@@ -37,13 +34,23 @@ ens.index()
 "
 # Downloads ~1.5GB to ~/Library/Caches/pyensembl/
 
+# Benchmarking and ML reranker (optional)
+pip install lightgbm
+
 # Testing
 pip install pytest
 ```
 
 ## External Tools
 
-### DeepImmuno-CNN (immunogenicity prediction)
+### BigMHC-IM (immunogenicity prediction — primary model)
+```bash
+pip install git+https://github.com/griffithlab/bigmhc.git
+# Ensemble of 7 transformer models, runs on CPU or GPU
+# No additional data downloads needed (models bundled in package)
+```
+
+### DeepImmuno-CNN (legacy, optional)
 ```bash
 cd /path/to/project
 git clone https://github.com/frankligy/DeepImmuno.git models/DeepImmuno
@@ -57,6 +64,7 @@ model_checkpoint_path: "model"
 all_model_checkpoint_paths: "model"
 EOF
 ```
+Note: DeepImmuno is no longer used in the default pipeline. BigMHC-IM replaced it.
 
 ### LinearDesign (mRNA codon + structure optimization)
 ```bash
@@ -82,6 +90,7 @@ curl -L -o reference/proteome/human_proteome.fasta.gz \
   "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/reference_proteomes/Eukaryota/UP000005640/UP000005640_9606.fasta.gz"
 gunzip -k reference/proteome/human_proteome.fasta.gz
 # ~27MB uncompressed, 20,659 proteins
+# First run will auto-generate a k-mer cache (.kmers_k9.npy) for fast reloading
 ```
 
 ## Demo Data (TCGA-EE-A3J5 melanoma)
@@ -101,17 +110,37 @@ curl -L -o demo/tcga_skcm/TCGA-EE-A3J5_expression.tsv \
 ## Running the Pipeline
 
 ```bash
-# Full end-to-end (VCF → mRNA)
+# Full end-to-end (MAF → mRNA)
 python tests/run_e2e.py
 
 # What it does:
 # Step 0: MAF → peptides (Ensembl GRCh38) + MHCflurry binding predictions
-# Module 8: DeepImmuno-CNN immunogenicity + foreignness (UniProt proteome)
-# Module 9: Composite scoring + ranking + selection (top 20)
+# Module 8a: BigMHC-IM immunogenicity + foreignness (UniProt proteome)
+# Module 8b: Structural scoring (TCR-facing position lookup)
+# Module 9: Sequential filters + ranking + selection (top 20)
 # Module 10: Polyepitope design (greedy TSP ordering, AAY linkers, MITD)
 # Module 11: LinearDesign codon optimization + UTRs + poly-A
 
 # Results saved to results/TCGA_EE_A3J5/
+```
+
+## Benchmarking
+
+```bash
+# Create patient splits (only needed once)
+python benchmark/make_splits.py \
+  --input benchmark/muller/Mutation_data_org.txt \
+  --dev-frac 0.7 --seed 42 \
+  --output benchmark/muller/splits.json
+
+# Run benchmark on dev set
+python benchmark/run_muller_benchmark.py \
+  --split dev --bootstrap 1000 --output experiments/my_experiment/
+
+# Compare against baseline
+python benchmark/compare_runs.py \
+  --baseline experiments/baseline_2026-04-07/ \
+  --candidate experiments/my_experiment/
 ```
 
 ## Pipeline Tools Summary
@@ -120,12 +149,12 @@ python tests/run_e2e.py
 |------|------|---------|---------|
 | Protein sequences | pyensembl (Ensembl GRCh38 r110) | Apache 2.0 | Local |
 | MHC-I binding | MHCflurry 2.2.0 | Apache 2.0 | Local |
-| Immunogenicity | DeepImmuno-CNN | MIT | Local (TF) |
-| Foreignness | k-mer vs UniProt proteome | - | Local |
-| Ranking | Custom composite scoring | - | Local |
-| Polyepitope | Greedy TSP + junctional QC | - | Local |
+| Immunogenicity | BigMHC-IM (ensemble of 7 models) | Academic | Local (PyTorch) |
+| Foreignness | k-mer vs UniProt proteome | -- | Local |
+| Ranking | LightGBM reranker or composite scoring | MIT | Local |
+| Polyepitope | Greedy TSP + junctional QC | -- | Local |
 | Codon optimization | LinearDesign | Academic free | Docker (x86_64) |
-| Structural scoring | AlphaFold2-Multimer (NVIDIA API) | API key required | Remote (async) |
+| Structural scoring | Position lookup / PANDORA / AlphaFold2 | Mixed | Local / Remote |
 
 ## Known Limitations
 
@@ -133,17 +162,17 @@ python tests/run_e2e.py
 - **No MHC Class II typing**: OptiType supports Class I only. Class II HLA typing requires HLA-HD (academic license).
 - **Structural scoring not yet in e2e**: AlphaFold2-Multimer API is async (hours per job). Script exists but not wired into main pipeline run.
 - **LinearDesign requires Docker on macOS ARM**: Pre-compiled x86_64 .so files have ABI mismatch with macOS ARM clang.
+- **Ensembl release pinned to 110**: Do not use `--release latest` — protein sequences change between releases.
 
 ## Dockerization Notes (for server/cloud deployment)
 
 The pipeline runs these tools:
 1. **MHCflurry** — `pip install mhcflurry` + model download (~135MB)
-2. **TensorFlow 2.15** — ~500MB
-3. **DeepImmuno** — git clone + checkpoint files (~500KB)
-4. **LinearDesign** — compiled C++ binary (Linux x86_64 only)
-5. **pyensembl** — Ensembl data cache (~1.5GB)
-6. **UniProt proteome** — ~27MB FASTA
+2. **BigMHC-IM** — PyTorch + 7 ensemble model weights (~200MB)
+3. **LinearDesign** — compiled C++ binary (Linux x86_64 only)
+4. **pyensembl** — Ensembl data cache (~1.5GB)
+5. **UniProt proteome** — ~27MB FASTA + k-mer cache
 
-Total Docker image size estimate: ~4GB base + ~3GB models/data = ~7GB
+Total Docker image size estimate: ~4GB base + ~2GB models/data = ~6GB
 
 For AWS Batch / cloud: Nextflow profiles in `conf/aws.config` define queue mappings.

@@ -190,72 +190,74 @@ mRNA: 1,253 nt | GC: 57.2% | MFE: -679.9 kcal/mol | CAI: 0.900
 
 ### Muller/Gfeller Harmonized Dataset (Immunity 2023)
 
-Primary benchmark: 131 patients, 13,483 screened mutations (213 immunogenic), all signals real (expression, CCF, agretopicity, wildtype sequences).
+Primary benchmark: 131 patients split into dev (91) and validation (39) sets. Evaluated on 8,891 screened mutations (146 immunogenic) in the dev set. Bootstrap CIs by resampling patients (not peptides).
 
-**Sequential filter funnel:**
-```
-13,483 mutations (213 immunogenic, 1.6%)
-  ↓ Binding < 2%
-9,369 (196 pos, 92% recall)
-  ↓ Expression > 1 TPM
-6,513 (184 pos, 86% recall)
-  ↓ CCF > 0.3
-~6,400 (180 pos, 85% recall)
-  ↓ Rank by binding strength → top 20 per patient
-```
+**Current best (EXP-013: LightGBM reranker, dev set):**
 
-**Per-patient results:**
-| Metric | Value |
-|---|---|
-| Macro Recall@20 | **0.584** |
-| Macro Recall@50 | 0.649 |
-| Patients with R@20 > 0 | 72/97 (74%) |
-
-**Individual signal AUCs (mutation-level):**
-| Signal | AUC | Role in pipeline |
+| Metric | Hand-tuned Composite | LightGBM Reranker |
 |---|---|---|
-| PRIME binding rank | **0.746** | Primary ranking signal |
-| Expression (TPM) | **0.739** | Hard filter |
-| Agretopicity | 0.590 | Validation flag |
-| BigMHC-IM | 0.586 | Validation flag |
-| CCF | 0.535 | Hard filter |
-| Structural tier 1 | 0.500 | Validation flag |
-| Foreignness | 0.478 | Hard filter |
+| Macro Recall@20 | 0.414 [0.310, 0.521] | **0.599 [0.494, 0.694]** |
+| Macro Recall@50 | 0.767 [0.671, 0.852] | **0.886 [0.822, 0.943]** |
 
-**Key finding**: Sequential hard filters + rank by binding strength (Recall@20 = 0.584) outperforms a weighted composite of all signals (Recall@20 = 0.372) by 57%. Binding rank is the strongest discriminator after filtering; immunogenicity and structural scores are most valuable as validation flags on top candidates.
+The reranker uses 13 features with leave-one-patient-out cross-validation.
+
+**Feature importance (LightGBM gain):**
+
+| Feature | Importance | AUC (individual) |
+|---|---|---|
+| BigMHC-IM | 390 | 0.562 |
+| Expression (log TPM) | 388 | 0.737 |
+| HydroCore (IMPROVE) | 313 | 0.540 |
+| Agretopicity | 299 | 0.594 |
+| CCF | 274 | 0.556 |
+| PRIME binding rank | 224 | 0.735 |
+| Structural tier 1 | 89 | 0.489 |
+| Driver mutation (Intogen) | 62 | 0.531 |
+| PropHydroAro (IMPROVE) | 58 | 0.547 |
+| Foreignness (k-mer) | 27 | 0.478 |
+
+See `experiments/LOG.md` for the full experiment history and `experiments/baseline_2026-04-07/` for baseline artifacts.
 
 ## Project Structure
 
 ```
 ChatNAV/
-├── bin/                            # Pipeline scripts
+├── bin/                            # Pipeline scripts (one per stage)
 │   ├── maf_to_pipeline_input.py        # Step 0: MAF → peptides + MHCflurry
 │   ├── score_immunogenicity.py         # Module 8a: BigMHC-IM + foreignness
 │   ├── structural_scoring.py           # Module 8b: Tiered structural scoring
 │   ├── rank_and_select.py              # Module 9: Sequential filter ranking
 │   ├── design_polyepitope.py           # Module 10: Polyepitope assembly
 │   └── design_mrna.py                  # Module 11: mRNA + LinearDesign
+├── benchmark/                      # Benchmark data + evaluation scripts
+│   ├── muller/                         # Muller/Gfeller 131-patient dataset
+│   │   ├── splits.json                 # Frozen dev/val split (91/39, seed=42)
+│   │   └── Mutation_data_org.txt       # Raw mutation data
+│   ├── gartner/                        # Gartner NCI dataset (internal validation)
+│   ├── tesla/                          # TESLA dataset (final holdout)
+│   ├── make_splits.py                  # Create patient-stratified splits
+│   ├── run_muller_benchmark.py         # Full benchmark with bootstrap CIs
+│   └── compare_runs.py                 # Compare experiments via CI overlap
 ├── conf/                           # Configuration
-│   └── scoring_weights.yaml            # Filter thresholds + profiles
-├── reference/                      # Small reference data
-│   ├── signal_peptides.fasta
+│   ├── scoring_weights.yaml            # Filter thresholds + profiles
+│   └── exp*.yaml                       # Per-experiment config overrides
+├── experiments/                    # Experiment outputs + log (append-only)
+│   ├── LOG.md                          # Experiment log (source of truth)
+│   ├── baseline_2026-04-07/            # Frozen baseline artifacts
+│   └── exp*/                           # Per-experiment artifact dirs
+├── reference/                      # Reference data
+│   ├── proteome/                       # UniProt human proteome + k-mer cache
 │   ├── shared_neoantigens/
 │   └── utr_library/
-├── benchmark/                      # Benchmark data + scripts
-│   ├── muller/                         # Muller/Gfeller 131-patient dataset
-│   └── gartner/                        # Gartner NCI 61-patient dataset
 ├── LinearDesign/                   # Submodule: codon optimization
-├── models/DeepImmuno/              # Submodule: legacy model
+├── models/DeepImmuno/              # Submodule: legacy immunogenicity model
 ├── docker/                         # Dockerfiles per module
 ├── modules/                        # Nextflow DSL2 modules
 ├── subworkflows/                   # Nextflow subworkflows
-├── scripts/
-│   └── restore_from_s3.sh             # Restore cached data from S3
-├── tests/
-│   └── run_e2e.py                      # Full e2e test
+├── tests/                          # pytest suite + e2e smoke test
 ├── main.nf                         # Nextflow entry point
 ├── nextflow.config
-├── SETUP.md                        # Detailed installation log
+├── SETUP.md                        # Installation guide
 └── plan.md                         # System design document
 ```
 
