@@ -108,6 +108,16 @@ class TestRankBonuses:
         # Frameshift should have lower effective_rank (= better)
         assert result.iloc[0]['effective_rank'] < result.iloc[1]['effective_rank']
 
+    def test_cd4_epitope_promotion(self):
+        df = pd.DataFrame({
+            'binding_rank': [0.01, 0.01],
+            'tpm': [10.0, 10.0],
+            'is_cd4_epitope': [True, False],
+        })
+        bonuses = {'is_cd4_epitope': 0.2}
+        result = apply_rank_bonuses(df, bonuses)
+        assert result.iloc[0]['effective_rank'] < result.iloc[1]['effective_rank']
+
 
 class TestHLADiversity:
     def test_already_diverse(self):

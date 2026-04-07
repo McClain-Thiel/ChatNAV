@@ -117,6 +117,48 @@ class TestBuildPolyepitope:
         assert any(d['element'] == 'mitd' for d in design)
 
 
+class TestClassIISpecific:
+    def test_gpgpg_linker_used_for_class_ii(self):
+        ep_ii = [
+            {'peptide_sequence': 'KIGDFGLATEKSRWSGSHQF', 'peptide_id': 'p1',
+             'gene': 'BRAF', 'mutation': 'V600E', 'rank': 1, 'hla_allele': 'DRB1*01:01'},
+            {'peptide_sequence': 'VVVGAVGVGKSALTIQLIQN', 'peptide_id': 'p2',
+             'gene': 'KRAS', 'mutation': 'G12V', 'rank': 2, 'hla_allele': 'DRB1*01:01'},
+        ]
+        seq, design = build_polyepitope([], ep_ii, SIGNAL_PEPTIDE, '')
+
+        # Should use GPGPG linker between Class II epitopes
+        assert LINKER_MHC_II in seq
+        # Should NOT use AAY linker (no Class I epitopes)
+        # (AAY could appear in peptide sequences, so check design table instead)
+        class_ii_entries = [d for d in design if d.get('linker') == LINKER_MHC_II]
+        assert len(class_ii_entries) >= 1
+
+    def test_mixed_class_construct_has_both_linkers(self):
+        ep_i = [
+            {'peptide_sequence': 'YLQPRTFLL', 'peptide_id': 'p1', 'gene': 'BRAF',
+             'mutation': 'V600E', 'rank': 1, 'hla_allele': 'HLA-A*02:01'},
+            {'peptide_sequence': 'KIGDFGLAT', 'peptide_id': 'p2', 'gene': 'KRAS',
+             'mutation': 'G12D', 'rank': 2, 'hla_allele': 'HLA-A*11:01'},
+        ]
+        ep_ii = [
+            {'peptide_sequence': 'KIGDFGLATEKSRWSGSHQF', 'peptide_id': 'p3',
+             'gene': 'KRAS', 'mutation': 'G12V', 'rank': 3, 'hla_allele': 'DRB1*01:01'},
+        ]
+        seq, design = build_polyepitope(ep_i, ep_ii, SIGNAL_PEPTIDE, '')
+
+        # AAY between Class I epitopes, GPGPG before Class II
+        assert LINKER_MHC_I in seq
+        assert LINKER_MHC_II in seq
+
+    def test_junction_score_with_gpgpg(self):
+        score = junction_score('YLQPRTFLL', 'KIGDFGLAT', LINKER_MHC_II)
+        # GPGPG contains proline — generally not a strong anchor residue,
+        # so junction score should be low
+        assert isinstance(score, float)
+        assert score >= 0.0
+
+
 class TestLoadSignalSequences:
     def test_load_from_fasta(self):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False) as f:
