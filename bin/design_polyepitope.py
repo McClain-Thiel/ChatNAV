@@ -90,6 +90,82 @@ def junction_score(pep_a: str, pep_b: str, linker: str, k: int = 9) -> float:
     return score
 
 
+def junction_binding_qc(construct_parts: list[str], hla_alleles: list[str],
+                        rank_threshold: float = 2.0) -> list[dict]:
+    """
+    Quantitative junctional epitope QC: run MHCflurry on every 8-11mer
+    spanning each linker junction. Flag any with presentation rank < threshold.
+
+    Args:
+        construct_parts: list of construct segments (epitopes + linkers)
+        hla_alleles: patient's Class I HLA alleles
+        rank_threshold: percentile rank cutoff (default 2.0%)
+
+    Returns:
+        list of flagged junctions with peptide, HLA, and rank
+    """
+    try:
+        from mhcflurry import Class1PresentationPredictor
+    except ImportError:
+        print("WARNING: MHCflurry not available — skipping quantitative junction QC",
+              file=sys.stderr)
+        return []
+
+    # Build full construct sequence
+    full_seq = ''.join(construct_parts)
+
+    # Find linker positions
+    linker_positions = []
+    pos = 0
+    for part in construct_parts:
+        if part in (LINKER_MHC_I, LINKER_MHC_II, TERMINAL_LINKER):
+            linker_positions.append((pos, pos + len(part), part))
+        pos += len(part)
+
+    if not linker_positions or not hla_alleles:
+        return []
+
+    # Extract all k-mers spanning each linker
+    junction_kmers = []
+    for start, end, linker in linker_positions:
+        for k in [8, 9, 10, 11]:
+            # Windows that overlap the linker region
+            for win_start in range(max(0, start - k + 1), min(end, len(full_seq) - k + 1)):
+                kmer = full_seq[win_start:win_start + k]
+                if len(kmer) == k and all(c in 'ACDEFGHIKLMNPQRSTVWY' for c in kmer):
+                    junction_kmers.append((kmer, linker, start))
+
+    if not junction_kmers:
+        return []
+
+    # Filter to Class I alleles only
+    class_i_alleles = [a for a in hla_alleles
+                       if not any(x in a for x in ('DRB', 'DQB', 'DPB', 'DRA', 'DQA', 'DPA'))]
+    if not class_i_alleles:
+        return []
+
+    # Run MHCflurry
+    predictor = Class1PresentationPredictor.load()
+    unique_kmers = list(set(kmer for kmer, _, _ in junction_kmers))
+
+    flagged = []
+    for allele in class_i_alleles:
+        try:
+            results = predictor.predict(peptides=unique_kmers, alleles=[allele] * len(unique_kmers))
+            for _, row in results.iterrows():
+                if row['presentation_percentile'] < rank_threshold:
+                    flagged.append({
+                        'peptide': row['peptide'],
+                        'hla_allele': allele,
+                        'presentation_rank': round(row['presentation_percentile'], 4),
+                        'affinity_nM': round(row.get('affinity', 0), 1),
+                    })
+        except Exception:
+            continue
+
+    return flagged
+
+
 def greedy_tsp_ordering(peptides: list[str], linker: str) -> list[int]:
     """
     Greedy TSP heuristic: order peptides to minimize total junction score.
@@ -298,15 +374,31 @@ def main():
     if mitd:
         print(f"  MITD domain: {len(mitd)} aa")
 
-    # Flag high junction scores
+    # Flag high junction scores (heuristic)
     high_junctions = [r for r in design_rows
                       if r.get('junction_score') is not None and r['junction_score'] > 1.0]
     if high_junctions:
-        print(f"\nWARNING: {len(high_junctions)} junctions with score > 1.0 — review for junctional epitopes",
+        print(f"\nWARNING: {len(high_junctions)} junctions with heuristic score > 1.0",
               file=sys.stderr)
         for j in high_junctions:
             print(f"  Position {j['position']}: {j.get('gene', '?')} — score {j['junction_score']}",
                   file=sys.stderr)
+
+    # Quantitative junction QC (MHCflurry)
+    hla_alleles = sorted(df['hla_allele'].dropna().unique().tolist()) if 'hla_allele' in df.columns else []
+    if hla_alleles:
+        construct_parts_for_qc = []
+        for row in design_rows:
+            construct_parts_for_qc.append(row.get('sequence', ''))
+            if row.get('linker'):
+                construct_parts_for_qc.append(row['linker'])
+        flagged = junction_binding_qc(construct_parts_for_qc, hla_alleles)
+        if flagged:
+            print(f"\nWARNING: {len(flagged)} junctional k-mers with binding rank < 2%:",
+                  file=sys.stderr)
+            for f in flagged[:10]:
+                print(f"  {f['peptide']} — {f['hla_allele']} rank={f['presentation_rank']}%",
+                      file=sys.stderr)
 
 
 if __name__ == '__main__':
