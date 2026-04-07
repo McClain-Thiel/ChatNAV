@@ -2,6 +2,16 @@
 
 An end-to-end computational pipeline for designing personalized mRNA neoantigen vaccines from somatic mutation data. Takes a patient's somatic mutations (MAF/VCF), HLA types, and gene expression as input and outputs a synthesis-ready mRNA vaccine sequence.
 
+## Background
+
+Cancer cells accumulate somatic mutations that produce altered proteins not found in normal tissue. Short peptide fragments (8-11 amino acids) from these mutant proteins can be presented on the cell surface by MHC molecules, where they are visible to the immune system as **neoantigens**. A personalized neoantigen vaccine encodes a set of patient-specific neoantigens as a single mRNA construct, training the patient's T cells to recognize and kill tumor cells displaying those peptides.
+
+This approach is already in late-stage clinical trials. BioNTech's **autogene cevumeran** (BNT122) and Moderna's **mRNA-4157** (V940) both use individualized mRNA vaccines encoding ~20 neoantigens per patient, with each vaccine designed and manufactured within weeks of tumor sequencing. Early results in melanoma and pancreatic cancer show durable T cell responses and improved recurrence-free survival when combined with checkpoint inhibitors.
+
+The computational challenge is **neoantigen selection**: a typical tumor has hundreds to thousands of somatic mutations, but only a small fraction (~1-5%) produce peptides that are (a) presented by the patient's MHC alleles and (b) actually immunogenic. Selecting the right 20 neoantigens from thousands of candidates is the core prediction problem this pipeline addresses.
+
+ChatNAV implements the full pipeline from raw mutation calls to a synthesis-ready mRNA sequence, with a focus on principled neoantigen ranking. The current best model (a LightGBM reranker trained on 13 immunogenicity-related features) achieves Macro Recall@20 of 0.60 on the Muller/Gfeller benchmark dataset, meaning that on average 60% of a patient's validated immunogenic neoantigens appear in the top 20 predictions.
+
 ## Pipeline Overview
 
 ```
@@ -30,10 +40,9 @@ Module 9: Sequential Filter Pipeline
     2. FILTER: expression TPM > 1
     3. FILTER: CCF > 0.3 (clonal)
     4. FILTER: not self-similar
-    5. RANK: by binding strength
+    5. RANK: LightGBM reranker (13 features) or binding strength
     6. BONUS: frameshifts + shared neoantigens promoted
-    7. FLAG: immunogenicity, structural, agretopicity as validation
-    8. SELECT: top 20 with HLA diversity
+    7. SELECT: top 20 with HLA diversity
     │
     ▼
 Module 10: Polyepitope Design
@@ -152,17 +161,16 @@ Tiered approach to score whether the mutated residue is TCR-exposed:
 
 ### Module 9: Sequential Filter Pipeline
 
-Sequential hard filters reduce the candidate pool, then ranking by binding strength:
+Sequential hard filters reduce the candidate pool, then candidates are ranked and selected:
 
 1. **Binding filter**: MHCflurry presentation percentile < 2% (keeps strong binders)
 2. **Expression filter**: Gene TPM > 1 (gene must be expressed in the tumor)
 3. **CCF filter**: Cancer cell fraction > 0.3 (mutation must be clonal/subclonal)
 4. **Self-match filter**: Exclude peptides identical to human proteome
-5. **Rank by binding**: Strongest binders first within the filtered set
+5. **Rank**: By expression-weighted binding strength (default) or LightGBM reranker using 13 features including BigMHC-IM immunogenicity, IMPROVE hydrophobicity features, agretopicity, driver gene status, and TCR-facing position
 6. **Bonus promotion**: Frameshifts and shared neoantigens get rank boosts
-7. **Validation flags**: Each candidate tagged with immunogenicity, structural, agretopicity assessments
-8. **HLA diversity**: Ensure coverage across patient's HLA alleles
-9. **Select top 20**
+7. **HLA diversity**: Ensure coverage across patient's HLA alleles
+8. **Select top 20**
 
 ### Module 10: Polyepitope Design
 
