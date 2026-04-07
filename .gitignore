@@ -17,6 +17,7 @@ demo/mc3.*.maf.gz
 # Reference data (downloaded at runtime)
 reference/proteome/
 reference/gtex_priors/*.tsv
+CLAUDE.md
 
 # Model weights and caches
 *.h5
