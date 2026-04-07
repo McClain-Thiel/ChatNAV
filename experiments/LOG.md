@@ -129,5 +129,7 @@
 - **CV AUC:** 0.776 (leave-one-patient-out)
 - **Per-patient:** 25 improved, 35 unchanged, 8 degraded, 5 tanked
 - **Top features (importance):** BigMHC-IM (390), expression (388), HydroCore (313), agretopicity (299), CCF (274), binding (224)
-- **Decision:** INVESTIGATE — CIs overlap (candidate lower 0.494 < baseline upper 0.521) but point delta +0.185 is very large. 5 tanked patients are all 1-positive-in-large-pool cases. Promote to muller-val.
+- **Decision:** INVESTIGATE on dev. Promoted to muller-val.
+- **muller-val result:** Recall@20 = 0.5982 [0.4515, 0.7563] vs baseline 0.5172 [0.3534, 0.6925] → delta +0.081. Val AUC 0.758 (close to dev CV 0.776 — no overfitting). 7 improved, 20 unchanged, 2 degraded, 2 tanked. CIs overlap → INVESTIGATE.
+- **Final decision:** Improvement holds on held-out data. Next step: Gartner evaluation (one-shot, only at release time).
 - **Commit:** pending
