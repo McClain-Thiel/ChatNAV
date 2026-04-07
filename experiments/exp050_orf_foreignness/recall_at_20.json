@@ -1,0 +1,8 @@
+{
+  "metric": "macro_recall_at_20",
+  "point_estimate": 0.7257,
+  "ci_lower": 0.6331,
+  "ci_upper": 0.8088,
+  "n_bootstrap": 1000,
+  "bootstrap_seed": 42
+}

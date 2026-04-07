@@ -180,4 +180,25 @@
   - Drop both: R@20 = 0.7289 (+0.003) — no loss at all
 - **Feature AUCs:** struct_best 0.489 (below chance), tcr_facing 0.494 (chance)
 - **Decision:** Demote Tier 1 from default path. Do NOT invest in Tier 3 (AlphaFold2). Reclaim GPU budget. Structural scoring remains available in 'research' profile only.
+- **Commit:** 6b34d4a
+
+## EXP-050: Full novel ORF foreignness for frameshifts
+- **Date:** 2026-04-07
+- **Branch:** main
+- **Hypothesis:** For frameshifts, the entire C-terminal sequence after the mutation is novel. Computing foreignness over the full ORF (not just the best window) gives a peptide-source-level signal.
+- **Change:** Compute orf_foreignness (mean foreignness of all 9-mers in mutant_seq) for FSS mutations; add orf_foreignness + is_frameshift as features.
+- **Baseline (dev):** R@20 = 0.7289 [0.6331, 0.8135] (25 features, post-Phase 5)
+- **Result (dev):** R@20 = 0.7257 (-0.003) — slight negative, within noise
+- **Feature AUCs:** is_frameshift 0.487 (anti-correlated!), orf_foreignness 0.475
+- **Decision:** DISCARD — Muller dataset has 0 immunogenic frameshifts (315 FSS, all negative). The model would learn the wrong signal. Keep frameshift bonus in pipeline config (biological prior) but do not add as LightGBM feature.
+
+## EXP-051: Replace foreign_best with orf_foreignness
+- **Date:** 2026-04-07
+- **Branch:** main
+- **Hypothesis:** ORF-level foreignness may be more informative than window-level for all mutation types.
+- **Change:** Swap foreign_best → orf_foreignness in feature set, add is_frameshift.
+- **Baseline (dev):** R@20 = 0.7289
+- **Result (dev):** R@20 = 0.7190 (-0.010) — slight degradation
+- **Decision:** DISCARD — orf_foreignness is noisier than window-level foreignness. Keep foreign_best.
+- **Note:** Both experiments confirm the biological prior (frameshifts should be promoted) cannot be validated on Muller due to 0 positive frameshifts. TESLA dataset would be needed for frameshift-specific evaluation.
 - **Commit:** pending
