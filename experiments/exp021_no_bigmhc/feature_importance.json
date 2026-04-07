@@ -1,0 +1,14 @@
+{
+  "binding_score": 225,
+  "expr_norm": 436,
+  "foreign_best": 55,
+  "agreto_norm": 388,
+  "ccf_val": 310,
+  "struct_best": 98,
+  "diff_agreto": 2,
+  "hydro_core": 372,
+  "prop_hydro_aro": 71,
+  "is_driver_gene": 30,
+  "is_known_driver_mut": 69,
+  "tcr_facing": 11
+}

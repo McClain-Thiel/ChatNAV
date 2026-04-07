@@ -132,4 +132,38 @@
 - **Decision:** INVESTIGATE on dev. Promoted to muller-val.
 - **muller-val result:** Recall@20 = 0.5982 [0.4515, 0.7563] vs baseline 0.5172 [0.3534, 0.6925] → delta +0.081. Val AUC 0.758 (close to dev CV 0.776 — no overfitting). 7 improved, 20 unchanged, 2 degraded, 2 tanked. CIs overlap → INVESTIGATE.
 - **Final decision:** Improvement holds on held-out data. Next step: Gartner evaluation (one-shot, only at release time).
+- **Commit:** e54fc38
+
+## EXP-020: Ensemble binding predictors in LightGBM reranker
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 3)
+- **Hypothesis:** Adding MixMHCpred, EL ranks, stability ranks, and binding method count alongside PRIME gives the reranker a richer binding signal with predictor diversity.
+- **Change:** Added 4 features to LightGBM: mixmhc_score, el_score, stab_score, n_binding_methods (17 features total).
+- **Baseline (dev):** EXP-013 R@20 = 0.5993 [0.4938, 0.6937]
+- **Result (dev):** Recall@20 = 0.7119 [0.6181, 0.7994] (**+11.3 points**)
+- **AUC:** 0.790 (up from 0.703)
+- **Decision:** INVESTIGATE — large improvement from adding binding predictor diversity. EL ranks and stability ranks carry new information.
+
+## EXP-021: Ablation — reranker without BigMHC-IM
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 3)
+- **Hypothesis:** If IMPROVE features (HydroCore, PropHydroAro) capture immunogenicity adequately, dropping BigMHC-IM saves 30+ min GPU time per patient.
+- **Change:** Removed bigmhc_best from feature set (12 features).
+- **Baseline (dev):** EXP-013 R@20 = 0.5993 [0.4938, 0.6937]
+- **Result (dev):** Recall@20 = 0.6336 [0.5269, 0.7390] (+3.4 points)
+- **AUC:** 0.704 (no change from baseline)
+- **Decision:** DISCARD as replacement. BigMHC-IM adds value (+3.4 points when removed). The IMPROVE features don't fully compensate. Keep BigMHC-IM in the pipeline.
+
+## EXP-022: Expanded feature reranker (27 features)
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 3)
+- **Hypothesis:** Adding all available Muller columns (DAI, TAP, netchop, CSCAPE, Intogen mutation counts, GTEx expression, zygosity, clonality, wildtype EL ranks) gives the reranker maximum information.
+- **Change:** 27 features total (EXP-013's 13 + EXP-020's 4 + 10 new: dai_best, tap_score, netchop_score, n_intogen_muts, cscape, tumor_content, is_het, is_clonal, gtex_expr, wt_el_best).
+- **Baseline (dev):** EXP-013 R@20 = 0.5993 [0.4938, 0.6937]
+- **Result (dev):** Recall@20 = 0.7262 [0.6350, 0.8103] (**+12.7 points**)
+- **AUC:** 0.795
+- **Top features:** TAP score (161), expression (156), wt_el_best (136), el_score (133), n_intogen_muts (125), gtex_expr (120), BigMHC-IM (117), CSCAPE (115), HydroCore (106), netchop (106)
+- **Decision:** INVESTIGATE on dev. Promoted to muller-val.
+- **muller-val result:** Recall@20 = 0.6638 [0.5287, 0.7874] vs EXP-013 val 0.5982 [0.4515, 0.7563] → delta +0.066. Val AUC 0.827 (up from 0.758). Holds and improves on held-out data.
+- **Final decision:** Best model so far. New baseline for future experiments. Next: Gartner at release time.
 - **Commit:** pending
