@@ -17,6 +17,8 @@ demo/mc3.*.maf.gz
 # Reference data (downloaded at runtime)
 reference/proteome/
 reference/gtex_priors/*.tsv
+# K-mer cache files
+reference/proteome/*.npy
 CLAUDE.md
 
 # Model weights and caches

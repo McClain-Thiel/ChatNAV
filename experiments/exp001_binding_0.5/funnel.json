@@ -1,0 +1,22 @@
+[
+  {
+    "step": "all_screened",
+    "n_mutations": 8891,
+    "n_immunogenic": 146
+  },
+  {
+    "step": "binding_rank_<=0.005",
+    "n_mutations": 4894,
+    "n_immunogenic": 122
+  },
+  {
+    "step": "tpm_>=1.0",
+    "n_mutations": 3336,
+    "n_immunogenic": 112
+  },
+  {
+    "step": "ccf_>=0.3",
+    "n_mutations": 3301,
+    "n_immunogenic": 112
+  }
+]

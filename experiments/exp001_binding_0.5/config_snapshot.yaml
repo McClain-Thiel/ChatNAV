@@ -1,0 +1,9 @@
+bonuses:
+  is_cd4_epitope: 0.1
+  is_frameshift: 0.5
+  is_shared_neoantigen: 0.3
+hard_filters:
+  mhc_binding_rank: 0.005
+  min_ccf: 0.3
+  min_tpm: 1.0
+  not_self_match: true

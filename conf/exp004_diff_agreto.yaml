@@ -1,0 +1,25 @@
+# EXP-004: Add binary differential agretopicity feature
+# Hypothesis: mutations where mutant binds well (< 0.5%) but wildtype
+# doesn't (> 2%) are strongly differentially presented, predicting
+# immunogenicity. Redistribute 0.05 weight from each of foreignness
+# and structural (weakest signals) to diff_agreto.
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 1.0
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1
+  composite_weights:
+    bigmhc_best: 0.30
+    foreign_best: 0.10       # was 0.15
+    agreto_norm: 0.10
+    binding_score: 0.15
+    expr_norm: 0.10
+    struct_best: 0.05        # was 0.10
+    ccf_val: 0.10
+    diff_agreto: 0.10        # new

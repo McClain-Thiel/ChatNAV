@@ -1,0 +1,14 @@
+# EXP-001: Tighten binding rank threshold from 2% to 0.5%
+# Hypothesis: matches mRNA-4157 clinical pipeline; 2% lets through 4x more
+# peptides and dilutes ranking quality.
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.005   # 0.5% (was 0.02 = 2%)
+    min_tpm: 1.0
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1

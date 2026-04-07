@@ -149,12 +149,32 @@ def compute_foreignness_kmer(peptide: str, proteome_kmers: set, k: int = 9) -> f
 
 
 def build_proteome_kmers(proteome_path: str, k: int = 9) -> set:
-    """Build k-mer set from a FASTA proteome file."""
+    """Build k-mer set from a FASTA proteome file.
+
+    Caches the result as a sorted numpy array of fixed-length byte strings
+    alongside the FASTA file (e.g. human_proteome.fasta.kmers.npy).
+    Subsequent calls load the cache in ~1s instead of rebuilding (~30s).
+    """
+    import hashlib
+    import numpy as np
+
     if not proteome_path:
         raise ValueError("proteome_path is required — provide a human proteome FASTA")
-    if not Path(proteome_path).exists():
+    proteome = Path(proteome_path)
+    if not proteome.exists():
         raise FileNotFoundError(f"Proteome file not found: {proteome_path}")
 
+    cache_path = proteome.with_suffix(f'.kmers_k{k}.npy')
+
+    # Load from cache if it exists and the FASTA hasn't changed
+    if cache_path.exists():
+        # Quick staleness check: cache must be newer than FASTA
+        if cache_path.stat().st_mtime >= proteome.stat().st_mtime:
+            arr = np.load(str(cache_path), allow_pickle=False)
+            kmers = set(b.decode('ascii') for b in arr)
+            return kmers
+
+    # Build from scratch
     kmers = set()
     seq = []
     with open(proteome_path) as f:
@@ -164,14 +184,22 @@ def build_proteome_kmers(proteome_path: str, k: int = 9) -> set:
                 if seq:
                     protein = ''.join(seq)
                     for i in range(len(protein) - k + 1):
-                        kmers.add(protein[i:i + k])
+                        kmer = protein[i:i + k]
+                        if all(c in 'ACDEFGHIKLMNPQRSTVWY' for c in kmer):
+                            kmers.add(kmer)
                 seq = []
             else:
                 seq.append(line)
         if seq:
             protein = ''.join(seq)
             for i in range(len(protein) - k + 1):
-                kmers.add(protein[i:i + k])
+                kmer = protein[i:i + k]
+                if all(c in 'ACDEFGHIKLMNPQRSTVWY' for c in kmer):
+                    kmers.add(kmer)
+
+    # Save cache
+    arr = np.array(sorted(kmers), dtype=f'S{k}')
+    np.save(str(cache_path), arr)
 
     return kmers
 

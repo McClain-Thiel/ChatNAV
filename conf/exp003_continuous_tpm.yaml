@@ -1,0 +1,15 @@
+# EXP-003: Remove hard TPM filter, rely on continuous log(TPM+1) in composite
+# Hypothesis: binary TPM > 1 filter discards mutations in lowly-expressed genes
+# that may still be immunogenic. The continuous expression signal in the
+# composite already penalizes low-expression candidates.
+
+high_tmb:
+  hard_filters:
+    mhc_binding_rank: 0.02
+    min_tpm: 0.0             # disabled (was 1.0)
+    min_ccf: 0.3
+    not_self_match: true
+  bonuses:
+    is_frameshift: 0.5
+    is_shared_neoantigen: 0.3
+    is_cd4_epitope: 0.1

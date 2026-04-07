@@ -260,6 +260,32 @@ def compute_funnel(df, config):
     return funnel
 
 
+def apply_hard_filters(df, config):
+    """Apply hard filters by setting composite = -inf for filtered mutations.
+
+    Filtered mutations sink below top-K but remain in the denominator for recall,
+    so overly aggressive filtering is properly penalized.
+    """
+    filters = config.get('hard_filters', {})
+    mask = np.ones(len(df), dtype=bool)
+
+    if 'mhc_binding_rank' in filters:
+        thresh = filters['mhc_binding_rank']
+        mask &= (df['MIN_MUT_RANK_CI_PRIME'].fillna(100) / 100.0 <= thresh).values
+
+    if 'min_tpm' in filters and filters['min_tpm'] > 0:
+        thresh = filters['min_tpm']
+        mask &= (df['rnaseq_TPM'].fillna(0) >= thresh).values
+
+    if 'min_ccf' in filters and filters['min_ccf'] > 0:
+        thresh = filters['min_ccf']
+        mask &= (df['CCF'].fillna(0) >= thresh).values
+
+    df = df.copy()
+    df.loc[~mask, 'composite'] = -np.inf
+    return df
+
+
 # ── Main pipeline ───────────────────────────────────────────────────
 
 def score_mutations(df):
@@ -370,19 +396,38 @@ def score_mutations(df):
     df['ccf_val'] = df['CCF'].fillna(0.5).clip(0, 1)
     df['binding_score'] = 1.0 - df['MIN_MUT_RANK_CI_PRIME'].clip(0, 100) / 100.0
 
-    # Composite
-    df['composite'] = (
-        0.30 * df['bigmhc_best'].values +
-        0.15 * df['foreign_best'].values +
-        0.10 * df['agreto_norm'].values +
-        0.15 * df['binding_score'].values +
-        0.10 * df['expr_norm'].values +
-        0.10 * df['struct_best'].values +
-        0.10 * df['ccf_val'].values
-    )
+    # Differential agretopicity: mutant binds well (< 0.5%) but wildtype doesn't (> 2%)
+    mut_rank_col = 'MIN_MUT_RANK_CI_PRIME' if 'MIN_MUT_RANK_CI_PRIME' in df.columns else 'MIN_MUT_RANK_CI_MIXMHC'
+    wt_rank_col = 'WT_BEST_RANK_CI_PRIME' if 'WT_BEST_RANK_CI_PRIME' in df.columns else 'WT_BEST_RANK_CI_MIXMHC'
+    mut_ranks = pd.to_numeric(df[mut_rank_col], errors='coerce').fillna(50)
+    wt_ranks = pd.to_numeric(df[wt_rank_col], errors='coerce').fillna(50)
+    df['diff_agreto'] = ((mut_ranks < 0.5) & (wt_ranks > 2.0)).astype(float)
+
     timings['aggregation'] = time.time() - t0
 
     return df, timings
+
+
+DEFAULT_COMPOSITE_WEIGHTS = {
+    'bigmhc_best': 0.30,
+    'foreign_best': 0.15,
+    'agreto_norm': 0.10,
+    'binding_score': 0.15,
+    'expr_norm': 0.10,
+    'struct_best': 0.10,
+    'ccf_val': 0.10,
+}
+
+
+def compute_composite(df, config):
+    """Compute composite score from config-specified weights."""
+    weights = config.get('composite_weights', DEFAULT_COMPOSITE_WEIGHTS)
+    composite = np.zeros(len(df))
+    for col, w in weights.items():
+        if col in df.columns and w != 0:
+            composite += w * df[col].values
+    df['composite'] = composite
+    return df
 
 
 def print_metrics(name, labels, scores):
@@ -460,6 +505,7 @@ def write_artifacts(df, config, timings, output_dir, n_bootstrap, seed):
         'expr_norm': 'Expression',
         'struct_best': 'Structural T1',
         'ccf_val': 'CCF',
+        'diff_agreto': 'Diff Agretopicity',
         'composite': 'Composite',
     }
     feature_aucs = {}
@@ -529,6 +575,14 @@ def main():
         '--profile', type=str, default='high_tmb',
         help='Config profile to use (default: high_tmb)'
     )
+    parser.add_argument(
+        '--save-scores', type=str, default=None,
+        help='Save scored DataFrame to this path (pickle) for reuse'
+    )
+    parser.add_argument(
+        '--load-scores', type=str, default=None,
+        help='Load pre-scored DataFrame from this path instead of re-scoring'
+    )
     args = parser.parse_args()
 
     if args.quick:
@@ -547,10 +601,47 @@ def main():
     print(f"  {len(df)} screened mutations, {df['label'].sum()} immunogenic, "
           f"{df['patient'].nunique()} patients")
 
-    # Score
-    total_t0 = time.time()
-    df, timings = score_mutations(df)
-    timings['total'] = time.time() - total_t0
+    # Score (or load cached scores)
+    if args.load_scores:
+        print(f"  Loading pre-scored data from {args.load_scores}...")
+        df = pd.read_pickle(args.load_scores)
+        # Re-apply split/patient filters to cached data
+        if args.split:
+            splits_path = PROJECT_ROOT / 'benchmark' / 'muller' / 'splits.json'
+            with open(splits_path) as f:
+                splits = json.load(f)
+            df = df[df['patient'].isin(splits[args.split])]
+        if args.max_patients:
+            patients = sorted(df['patient'].unique())[:args.max_patients]
+            df = df[df['patient'].isin(patients)]
+        # Recompute derived columns if missing from cache
+        if 'diff_agreto' not in df.columns:
+            mut_rank_col = 'MIN_MUT_RANK_CI_PRIME' if 'MIN_MUT_RANK_CI_PRIME' in df.columns else 'MIN_MUT_RANK_CI_MIXMHC'
+            wt_rank_col = 'WT_BEST_RANK_CI_PRIME' if 'WT_BEST_RANK_CI_PRIME' in df.columns else 'WT_BEST_RANK_CI_MIXMHC'
+            mut_ranks = pd.to_numeric(df[mut_rank_col], errors='coerce').fillna(50)
+            wt_ranks = pd.to_numeric(df[wt_rank_col], errors='coerce').fillna(50)
+            df['diff_agreto'] = ((mut_ranks < 0.5) & (wt_ranks > 2.0)).astype(float)
+        timings = {}
+        timings['total'] = 0.0
+    else:
+        total_t0 = time.time()
+        df, timings = score_mutations(df)
+        timings['total'] = time.time() - total_t0
+
+    if args.save_scores:
+        df.to_pickle(args.save_scores)
+        print(f"  Saved scored data to {args.save_scores}")
+
+    # Compute composite from config weights
+    df = compute_composite(df, config)
+
+    # Apply hard filters: filtered mutations get composite=-inf so they
+    # sink below top-K, but remain in the denominator for recall
+    df = apply_hard_filters(df, config)
+    n_surviving = (df['composite'] > -np.inf).sum()
+    n_pos_surviving = df.loc[df['composite'] > -np.inf, 'label'].sum()
+    print(f"\n  After hard filters: {n_surviving}/{len(df)} mutations survive "
+          f"({n_pos_surviving}/{df['label'].sum()} immunogenic)")
 
     labels = df['label'].values
 
@@ -567,6 +658,8 @@ def main():
     print_metrics("Expression (log TPM)", labels, df['expr_norm'].values)
     print_metrics("Structural tier 1", labels, df['struct_best'].values)
     print_metrics("CCF", labels, df['ccf_val'].values)
+    if 'diff_agreto' in df.columns:
+        print_metrics("Diff agretopicity", labels, df['diff_agreto'].values)
     print_metrics("Our composite (ALL signals, best window)", labels, df['composite'].values)
 
     # Bootstrap macro Recall@20

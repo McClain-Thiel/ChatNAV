@@ -20,3 +20,67 @@
 - **Commit:** <git SHA>
 
 -->
+
+## BASELINE: Initial dev set baseline with hard filters
+- **Date:** 2026-04-07
+- **Branch:** main
+- **Setup:** Phase 0 infrastructure: `make_splits.py` (91 dev / 39 val, seed=42), upgraded `run_muller_benchmark.py` with CLI flags + standard artifact output, `compare_runs.py`, pre-commit holdout guard.
+- **Config:** `conf/scoring_weights.yaml` profile `high_tmb` (binding < 2%, TPM >= 1.0, CCF >= 0.3)
+- **Composite weights:** BigMHC 0.30, foreignness 0.15, agretopicity 0.10, binding 0.15, expression 0.10, structural 0.10, CCF 0.10
+- **Result (dev, with hard filters):** Macro Recall@20 = 0.4141 [0.3095, 0.5207] (68 patients with positives)
+- **Result (dev, R@50):** Macro Recall@50 = 0.7673 [0.6711, 0.8515]
+- **Funnel:** 8891 screened → 4928 binding → 4984 TPM → 4928 CCF
+- **Feature AUCs:** Expression 0.737, PRIME binding 0.735, Agretopicity 0.594, BigMHC-IM 0.562, CCF 0.556, Diff Agretopicity 0.500, Structural T1 0.489, Foreignness 0.478
+- **Commit:** 92b7ac8
+
+## EXP-001: Drop binding rank threshold 2% → 0.5%
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 1)
+- **Hypothesis:** Real clinical pipelines (mRNA-4157) use 0.5%; 2% lets through 4x more peptides and dilutes ranking.
+- **Change:** `conf/exp001_binding_0.5.yaml`: `mhc_binding_rank: 0.02 → 0.005`
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4781 [0.3757, 0.5755]
+- **Funnel delta:** 4928 → 3301 survive binding filter; 129 → 112 immunogenic survive
+- **Per-patient:** 9 improved, 56 unchanged, 3 degraded. Patient10 tanked 1.0→0.0.
+- **Decision:** INVESTIGATE — +6.4 points but CIs overlap and 1 patient tanks. Worth combining with EXP-004.
+
+## EXP-002: Demote CCF from hard filter to soft reranker feature
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 1)
+- **Hypothesis:** CCF hard filter (AUC 0.556) costs recall for minimal discriminative value.
+- **Change:** `conf/exp002_ccf_soft.yaml`: `min_ccf: 0.3 → 0.0`
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Funnel delta:** 4984 → 4984 (CCF filter removes 0 additional mutations after binding+TPM)
+- **Per-patient:** 0 improved, 68 unchanged, 0 degraded
+- **Decision:** DISCARD — CCF filter is already a no-op on this dataset. Every mutation that passes binding+TPM also passes CCF >= 0.3.
+
+## EXP-003: Replace hard TPM filter with continuous log(TPM+1) in composite
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 1)
+- **Hypothesis:** Binary TPM > 1 filter discards mutations in lowly-expressed genes that may still be immunogenic. Continuous expression signal already penalizes low expression.
+- **Change:** `conf/exp003_continuous_tpm.yaml`: `min_tpm: 1.0 → 0.0`
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.3751 [0.2730, 0.4800]
+- **Funnel delta:** 4928 → 7164 survive (2236 more mutations flood in, only 10 more immunogenic)
+- **Per-patient:** 2 improved, 61 unchanged, 5 degraded. 3 patients tanked.
+- **Decision:** DISCARD — removing TPM filter lets in noise that dilutes ranking. The hard filter is protective.
+
+## EXP-004: Add binary differential agretopicity feature
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 1)
+- **Hypothesis:** Mutations where mutant binds well (< 0.5%) but wildtype doesn't (> 2%) are strongly differentially presented, predicting immunogenicity.
+- **Change:** `benchmark/run_muller_benchmark.py`: added `diff_agreto` column. `conf/exp004_diff_agreto.yaml`: redistributed 0.05 weight each from foreignness and structural to `diff_agreto` (0.10 weight).
+- **Baseline (dev):** Recall@20 = 0.4141 [0.3095, 0.5207]
+- **Result (dev):** Recall@20 = 0.4363 [0.3338, 0.5419]
+- **Per-patient:** 8 improved, 57 unchanged, 3 degraded. 1 patient tanked.
+- **Decision:** INVESTIGATE — +2.2 points, CIs overlap. Small but consistent lift. Worth combining with EXP-001.
+
+## EXP-005: Cache UniProt k-mer index as memory-mapped numpy array
+- **Date:** 2026-04-07
+- **Branch:** main (batched with Phase 1)
+- **Hypothesis:** Engineering only — no accuracy change. Proteome k-mer index build takes ~30s per run; caching as sorted numpy array enables ~1s reload.
+- **Change:** `bin/score_immunogenicity.py`: `build_proteome_kmers()` now saves/loads `.kmers_k9.npy` cache alongside FASTA, with staleness check.
+- **Result:** No accuracy impact. Cache file verified on GPU instance.
+- **Decision:** Keep (engineering improvement)
+- **Commit:** pending
