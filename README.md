@@ -271,9 +271,11 @@ ChatNAV/
 
 ## Infrastructure
 
+Current deployment is a Nextflow pipeline running locally or on AWS Batch. See [INFRASTRUCTURE.md](INFRASTRUCTURE.md) for the full architecture, AWS resources, and the plan for wrapping this as a FastAPI service with a web frontend.
+
 - **S3 bucket**: `s3://chatnav-pipeline-data/` (~620GB cached data)
-- **GPU instance**: g6e.4xlarge (NVIDIA L40S 46GB), AlphaFold2-Multimer NIM deployed
-- **PANDORA**: Docker container with MODELLER + 864 MHC-I templates
+- **GPU instance**: g6e.4xlarge (NVIDIA L40S 46GB) for BigMHC scoring and benchmarking
+- **14 Docker images**: one per pipeline stage, in `docker/`
 - New instances: `bash scripts/restore_from_s3.sh` pulls all cached data in ~5 minutes
 
 ## Known Limitations
