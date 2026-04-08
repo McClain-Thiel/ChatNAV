@@ -4,16 +4,27 @@ ChatNAV: Unified neoantigen vaccine design pipeline.
 
 Single entry point: MAF/VCF + expression + HLA → synthesis-ready mRNA vaccine.
 
+Inputs:
+    SOMATIC variants (tumor vs normal already called) in one of:
+      --maf  TCGA-format MAF (from GDC, vcf2maf, or nf-core/sarek)
+      --vcf  VEP-annotated somatic VCF (from Mutect2/Strelka2 + VEP)
+
+    The pipeline does NOT do variant calling. Run Mutect2/Strelka2 on your
+    tumor + normal BAMs first, then annotate with VEP, then feed here.
+
 Usage:
+    # From MAF (most common — TCGA, GDC, sarek output)
     python bin/run_pipeline.py \
         --maf patient_somatic.maf.gz \
         --expression patient_expression.tsv \
-        --hla-alleles HLA-A*02:01,HLA-A*01:01,HLA-B*07:02,HLA-B*44:03,HLA-C*07:02,HLA-C*05:01 \
+        --hla-alleles HLA-A*02:01,HLA-A*01:01,HLA-B*07:02,HLA-B*44:03 \
         --output results/patient_001/ \
         --patient-id PT-001
 
+    # From VEP-annotated somatic VCF (Mutect2 output → VEP → here)
     python bin/run_pipeline.py \
-        --vcf patient_somatic.vcf.gz \
+        --vcf patient_somatic.vep.vcf.gz \
+        --tumor-sample TUMOR \
         --expression patient_expression.tsv \
         --hla-alleles HLA-A*02:01,HLA-B*07:02 \
         --output results/patient_002/
@@ -134,9 +145,14 @@ def main():
     )
 
     # Input (MAF or VCF required)
+    # Both must be SOMATIC variants (tumor vs normal already called).
+    # The pipeline does NOT do variant calling — use Mutect2/Strelka2/sarek first.
     input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument('--maf', help='Somatic MAF file (TCGA format)')
-    input_group.add_argument('--vcf', help='Somatic VCF file (annotated with VEP)')
+    input_group.add_argument('--maf', help='Somatic MAF file (TCGA format, from GDC or vcf2maf)')
+    input_group.add_argument('--vcf',
+                             help='Somatic VCF file (VEP-annotated, from Mutect2/Strelka2). '
+                                  'Must contain CSQ INFO field from VEP. This is the output of '
+                                  'somatic variant calling (tumor vs normal), NOT a raw single-sample VCF.')
 
     parser.add_argument('--expression', required=True,
                         help='Gene expression TSV (gene_id + TPM columns)')
@@ -158,9 +174,10 @@ def main():
     parser.add_argument('--ensembl-release', type=int, default=110,
                         help='Ensembl release (default: 110, pinned)')
     parser.add_argument('--tumor-sample', default=None,
-                        help='Tumor sample name in VCF (for paired VCF input)')
+                        help='Tumor sample name in the VCF (column header after FORMAT). '
+                             'Needed to extract allele depths. Default: first sample column.')
     parser.add_argument('--normal-sample', default=None,
-                        help='Normal sample name in VCF (for paired VCF input)')
+                        help='Normal/germline sample name in the VCF (if present)')
     parser.add_argument('--skip-mrna', action='store_true',
                         help='Skip mRNA design (LinearDesign step)')
     parser.add_argument('--dry-run', action='store_true',
