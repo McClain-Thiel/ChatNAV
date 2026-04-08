@@ -1,0 +1,47 @@
+{
+  "features": [
+    "bigmhc_best",
+    "binding_score",
+    "expr_norm",
+    "foreign_best",
+    "agreto_norm",
+    "ccf_val",
+    "diff_agreto",
+    "hydro_core",
+    "prop_hydro_aro"
+  ],
+  "feature_mapping": {
+    "bigmhc_best": "immunogenicity_score",
+    "binding_score": "1.0 - binding_rank",
+    "expr_norm": "log10(tpm + 1) / 5.0, capped at 1.0",
+    "foreign_best": "foreignness_score",
+    "agreto_norm": "1 / (1 + exp(-0.5 * agretopicity))",
+    "ccf_val": "ccf clipped to [0, 1], default 0.5",
+    "diff_agreto": "1.0 if binding_rank < 0.005 and wt_binding_rank > 0.02",
+    "hydro_core": "mean Kyte-Doolittle hydrophobicity of binding core positions",
+    "prop_hydro_aro": "proportion of FYWILVM in binding core"
+  },
+  "model_file": "lgbm_pipeline_v1.txt",
+  "model_sha256": "54922212d1f5832d68be8fd031f3cade92c5712f9f5a352e1251a8282b1d58c0",
+  "model_params": {
+    "objective": "binary",
+    "metric": "auc",
+    "boosting_type": "gbdt",
+    "num_leaves": 15,
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "n_estimators": 200,
+    "min_child_samples": 10,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 1.0,
+    "reg_lambda": 1.0,
+    "random_state": 42,
+    "verbose": -1,
+    "is_unbalance": true
+  },
+  "training_data": "Muller dev set (91 patients, 8891 mutations, 146 positive)",
+  "dev_recall_at_20": 0.635,
+  "val_recall_at_20": 0.6844,
+  "val_auc": 0.7501
+}

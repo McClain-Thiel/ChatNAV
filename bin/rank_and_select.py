@@ -242,32 +242,50 @@ def main():
             feat_config = _json.load(f)
         feature_cols = feat_config['features']
 
-        # Map pipeline column names to reranker feature names
-        col_map = {
-            'immunogenicity_score': 'bigmhc_best',
-            'foreignness_score': 'foreign_best',
-            'binding_rank': 'binding_score',
-            'structural_score': 'struct_best',
-        }
-        for old_name, new_name in col_map.items():
-            if old_name in df.columns and new_name not in df.columns:
-                if new_name == 'binding_score':
-                    df[new_name] = 1.0 - df[old_name].clip(0, 1)
-                else:
-                    df[new_name] = df[old_name]
-
-        # Compute derived features if missing
+        # Compute all reranker features from pipeline columns
+        if 'bigmhc_best' not in df.columns:
+            df['bigmhc_best'] = df.get('immunogenicity_score', pd.Series(0.0)).fillna(0)
+        if 'binding_score' not in df.columns:
+            df['binding_score'] = 1.0 - df['binding_rank'].clip(0, 1)
         if 'expr_norm' not in df.columns:
             df['expr_norm'] = df['tpm'].apply(normalize_expression)
+        if 'foreign_best' not in df.columns:
+            df['foreign_best'] = df.get('foreignness_score', pd.Series(0.5)).fillna(0.5)
+        if 'agreto_norm' not in df.columns:
+            df['agreto_norm'] = df.get('agretopicity', pd.Series(0.0)).apply(
+                lambda a: 0.5 if pd.isna(a) else 1.0 / (1.0 + math.exp(-0.5 * a))
+            )
         if 'ccf_val' not in df.columns:
             df['ccf_val'] = df.get('ccf', pd.Series(0.5)).fillna(0.5).clip(0, 1)
-        if 'agreto_norm' not in df.columns and 'agretopicity' in df.columns:
-            import math as _math
-            df['agreto_norm'] = df['agretopicity'].apply(
-                lambda a: 0.5 if pd.isna(a) else 1.0 / (1.0 + _math.exp(-0.5 * a))
-            )
+        if 'diff_agreto' not in df.columns:
+            br = df['binding_rank'].fillna(1.0)
+            wr = df.get('wildtype_binding_rank', pd.Series(1.0)).fillna(1.0)
+            df['diff_agreto'] = ((br < 0.005) & (wr > 0.02)).astype(float)
 
-        # Fill missing features with 0
+        # IMPROVE hydrophobicity features from peptide sequence
+        KD_HYDRO = {
+            'A': 1.8, 'C': 2.5, 'D': -3.5, 'E': -3.5, 'F': 2.8,
+            'G': -0.4, 'H': -3.2, 'I': 4.5, 'K': -3.9, 'L': 3.8,
+            'M': 1.9, 'N': -3.5, 'P': -1.6, 'Q': -3.5, 'R': -4.5,
+            'S': -0.8, 'T': -0.7, 'V': 4.2, 'W': -0.9, 'Y': -1.3,
+        }
+        HYDRO_ARO = set('FYWILVM')
+        if 'hydro_core' not in df.columns or 'prop_hydro_aro' not in df.columns:
+            h_scores, p_scores = [], []
+            for _, row in df.iterrows():
+                pep = str(row.get('peptide_sequence', ''))
+                if len(pep) < 8:
+                    h_scores.append(0.0); p_scores.append(0.0); continue
+                pl = len(pep)
+                cs = 3 if pl in (9, 10) else (2 if pl == 8 else 4)
+                core = pep[cs:cs+4]
+                hv = [KD_HYDRO.get(aa, 0.0) for aa in core]
+                h_scores.append((sum(hv)/len(hv) + 4.5) / 9.0)
+                p_scores.append(sum(1 for aa in core if aa in HYDRO_ARO) / len(core))
+            df['hydro_core'] = h_scores
+            df['prop_hydro_aro'] = p_scores
+
+        # Fill any remaining missing features with 0
         for col in feature_cols:
             if col not in df.columns:
                 df[col] = 0.0

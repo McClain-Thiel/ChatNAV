@@ -157,6 +157,10 @@ def main():
                         help='Limit mutations processed (default: all)')
     parser.add_argument('--ensembl-release', type=int, default=110,
                         help='Ensembl release (default: 110, pinned)')
+    parser.add_argument('--tumor-sample', default=None,
+                        help='Tumor sample name in VCF (for paired VCF input)')
+    parser.add_argument('--normal-sample', default=None,
+                        help='Normal sample name in VCF (for paired VCF input)')
     parser.add_argument('--skip-mrna', action='store_true',
                         help='Skip mRNA design (LinearDesign step)')
     parser.add_argument('--dry-run', action='store_true',
@@ -196,12 +200,20 @@ def main():
         step0_args.append('--dry-run')
 
     if args.maf:
-        step0_args = ['--maf', args.maf] + step0_args
+        maf_path = args.maf
     else:
-        step0_args = ['--maf', args.vcf] + step0_args  # VCF handled same way for now
+        # Convert VCF → MAF first
+        maf_path = outdir / 'converted.maf'
+        vcf_args = ['--vcf', args.vcf, '--output', maf_path]
+        if args.tumor_sample:
+            vcf_args += ['--tumor-sample', args.tumor_sample]
+        if args.normal_sample:
+            vcf_args += ['--normal-sample', args.normal_sample]
+        run_step('vcf_to_maf.py', vcf_args, 'Step 0a: VCF → MAF conversion')
 
+    step0_args = ['--maf', maf_path] + step0_args
     run_step('maf_to_pipeline_input.py', step0_args,
-             'Step 0: Variant → Peptides + MHC Binding')
+             'Step 0b: MAF → Peptides + MHC Binding')
 
     if args.dry_run:
         print("\nDry run complete — inputs validated.")
@@ -230,7 +242,10 @@ def main():
     selected_path = outdir / 'selected_neoantigens.tsv'
     weights_path = PROJECT_ROOT / 'conf' / 'scoring_weights.yaml'
 
-    run_step('rank_and_select.py', [
+    reranker_model = PROJECT_ROOT / 'models' / 'reranker' / 'lgbm_pipeline_v1.txt'
+    reranker_features = PROJECT_ROOT / 'models' / 'reranker' / 'pipeline_features.json'
+
+    rank_args = [
         '--immunogenicity-scores', immuno_path,
         '--structural-scores', structural_path,
         '--candidates-meta', meta_path,
@@ -239,7 +254,13 @@ def main():
         '--weight-profile', args.profile,
         '--top-n', args.top_n,
         '--output', selected_path,
-    ], 'Module 9: Ranking & Selection')
+    ]
+    if reranker_model.exists() and reranker_features.exists():
+        rank_args += ['--reranker-model', reranker_model,
+                      '--reranker-features', reranker_features]
+
+    run_step('rank_and_select.py', rank_args,
+             'Module 9: Ranking & Selection')
 
     # ── Count filter-passing candidates for confidence ──
     import pandas as pd
