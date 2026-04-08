@@ -219,6 +219,100 @@ def count_pseudouridine_positions(mrna_seq: str) -> list[int]:
     return [i + 1 for i, nt in enumerate(mrna_seq) if nt == 'U']
 
 
+def scan_poly_a_signals(cds: str) -> list[dict]:
+    """Scan CDS for internal poly-A signal motifs that could cause premature polyadenylation.
+
+    Primary signal: AAUAAA (canonical) and AUUAAA (most common variant).
+    These should not appear in the CDS region.
+    """
+    signals = []
+    motifs = ['AAUAAA', 'AUUAAA']
+    for motif in motifs:
+        start = 0
+        while True:
+            pos = cds.find(motif, start)
+            if pos == -1:
+                break
+            signals.append({
+                'motif': motif,
+                'position': pos,
+                'codon_frame': pos % 3,
+            })
+            start = pos + 1
+    return signals
+
+
+def scan_splice_sites(cds: str) -> list[dict]:
+    """Scan CDS for cryptic splice donor (GU at exon/intron boundary)
+    and acceptor (AG) sites that could cause aberrant splicing.
+
+    Looks for consensus donor (GU...AAGU) and acceptor (YAG) motifs.
+    Only flags strong consensus matches, not every GU/AG dinucleotide.
+    """
+    sites = []
+    # Splice donor: ...//GU[A/G]AGU... (strong consensus = GURAGU)
+    for i in range(len(cds) - 5):
+        if cds[i:i+2] == 'GU' and cds[i+2:i+4] in ('AA', 'AG', 'GA', 'GG'):
+            if i + 5 < len(cds) and cds[i+4:i+6] == 'GU':
+                sites.append({
+                    'type': 'donor',
+                    'motif': cds[i:i+6],
+                    'position': i,
+                })
+
+    # Splice acceptor: ...YYAG//... (strong consensus = pyrimidine-rich + AG)
+    for i in range(2, len(cds) - 1):
+        if cds[i:i+2] == 'AG' and cds[i-1] in ('U', 'C') and cds[i-2] in ('U', 'C'):
+            sites.append({
+                'type': 'acceptor',
+                'motif': cds[i-2:i+2],
+                'position': i - 2,
+            })
+
+    return sites
+
+
+def run_lineardesign_pareto(protein_seq: str, lineardesign_dir: str = None,
+                            lambdas: list[float] = None) -> list[dict]:
+    """Run LinearDesign at multiple lambda values to explore the CAI/MFE Pareto front.
+
+    Returns a list of solutions sorted by MFE (most stable first).
+    """
+    if lambdas is None:
+        lambdas = [0.0, 1.0, 3.0, 5.0, 10.0]
+
+    solutions = []
+    for lam in lambdas:
+        try:
+            cds, structure, mfe, cai = run_lineardesign(protein_seq, lineardesign_dir, lam=lam)
+            solutions.append({
+                'lambda': lam,
+                'cds': cds,
+                'structure': structure,
+                'mfe_kcal': mfe,
+                'cai': cai,
+                'gc_content': round((cds.count('G') + cds.count('C')) / len(cds), 4),
+            })
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"  LinearDesign lambda={lam} failed: {e}", file=sys.stderr)
+
+    # Filter to Pareto-optimal: keep only solutions where no other dominates on both MFE and CAI
+    pareto = []
+    for s in solutions:
+        dominated = False
+        for other in solutions:
+            if other is s:
+                continue
+            if other['mfe_kcal'] <= s['mfe_kcal'] and other['cai'] >= s['cai']:
+                if other['mfe_kcal'] < s['mfe_kcal'] or other['cai'] > s['cai']:
+                    dominated = True
+                    break
+        if not dominated:
+            pareto.append(s)
+
+    return sorted(pareto, key=lambda x: x['mfe_kcal'])
+
+
 def main():
     parser = argparse.ArgumentParser(description='Module 11: mRNA Design')
     parser.add_argument('--polyepitope', required=True, help='polyepitope.faa from Module 10')
@@ -232,6 +326,8 @@ def main():
     parser.add_argument('--lineardesign-lambda', type=float, default=3.0,
                         help='LinearDesign lambda (0=pure MFE, higher=more CAI)')
     parser.add_argument('--output-spec', required=True)
+    parser.add_argument('--pareto', action='store_true',
+                        help='Run LinearDesign at multiple lambdas and output Pareto front')
     args = parser.parse_args()
 
     # Read polyepitope protein sequence
@@ -330,6 +426,41 @@ def main():
     with open(args.output_spec, 'w') as f:
         json.dump(spec, f, indent=2)
 
+    # ── Step 6: CDS quality scans ──
+    poly_a_hits = scan_poly_a_signals(cds)
+    splice_hits = scan_splice_sites(cds)
+
+    spec['quality_scans'] = {
+        'internal_poly_a_signals': len(poly_a_hits),
+        'cryptic_splice_sites': len(splice_hits),
+    }
+
+    if poly_a_hits:
+        spec['quality_scans']['poly_a_details'] = poly_a_hits
+    if splice_hits:
+        spec['quality_scans']['splice_site_details'] = splice_hits
+
+    # Re-write spec with scan results
+    with open(args.output_spec, 'w') as f:
+        json.dump(spec, f, indent=2)
+
+    # ── Step 7: Pareto front (optional) ──
+    if args.pareto:
+        print("\n  Running LinearDesign Pareto front (lambdas 0, 1, 3, 5, 10)...",
+              file=sys.stderr)
+        pareto = run_lineardesign_pareto(
+            protein_seq, lineardesign_dir=args.lineardesign_dir
+        )
+        if pareto:
+            spec['pareto_front'] = pareto
+            with open(args.output_spec, 'w') as f:
+                json.dump(spec, f, indent=2)
+            print(f"  Pareto front: {len(pareto)} solutions", file=sys.stderr)
+            for s in pareto:
+                print(f"    lambda={s['lambda']}: MFE={s['mfe_kcal']:.1f}, "
+                      f"CAI={s['cai']:.3f}, GC={s['gc_content']:.1%}",
+                      file=sys.stderr)
+
     # Summary
     print(f"\nmRNA design complete:")
     print(f"  Total length: {len(mrna_sequence)} nt")
@@ -340,6 +471,10 @@ def main():
     print(f"  GC content: {spec['gc_content']:.1%}")
     print(f"  Pseudouridine positions: {len(psi_positions)}")
     print(f"  Codon optimization: {codon_method}")
+    if poly_a_hits:
+        print(f"  WARNING: {len(poly_a_hits)} internal poly-A signals in CDS")
+    if splice_hits:
+        print(f"  WARNING: {len(splice_hits)} cryptic splice sites in CDS")
 
 
 if __name__ == '__main__':
