@@ -167,6 +167,8 @@ def main():
     parser.add_argument('--structural-scores', default=None,
                         help='structural_scores.tsv from Module 8b')
     parser.add_argument('--output', required=True)
+    parser.add_argument('--output-stats', default=None,
+                        help='Optional: write pipeline_stats.json with funnel counts')
     args = parser.parse_args()
 
     # Load weight profile
@@ -196,6 +198,10 @@ def main():
         struct_cols = [c for c in struct_cols if c in structural.columns]
         df = df.merge(structural[struct_cols], on=['peptide_id', 'hla_allele'], how='left')
 
+    # Track funnel counts
+    n_total_scored = len(df)
+    n_unique_mutations = df['peptide_id'].apply(lambda x: '_'.join(x.rsplit('_', 1)[:-1]) if '_' in x else x).nunique()
+
     # Normalize expression and agretopicity
     df['expression_norm'] = df['tpm'].apply(normalize_expression)
     df['agretopicity_norm'] = df['agretopicity'].apply(normalize_agretopicity)
@@ -210,8 +216,12 @@ def main():
     if 'mhc_class' in df.columns:
         df.loc[df['mhc_class'] == 'II', 'is_cd4_epitope'] = True
 
+    # Save pre-filter state for stats, count binders
+    df_pre_filter = df.copy()
+
     # Apply hard filters
     df = apply_hard_filters(df, filters)
+    n_after_filter = len(df)
 
     if len(df) == 0:
         raise RuntimeError("No candidates passed hard filters — check binding data and filter thresholds")
@@ -252,6 +262,21 @@ def main():
 
     selected.to_csv(args.output, sep='\t', index=False)
     print(f"Selected {len(selected)} neoantigens → {args.output}")
+
+    # Write pipeline stats if requested
+    if args.output_stats:
+        import json as _json
+        n_binders = (df_pre_filter['binding_rank'] < 0.02).sum() if 'df_pre_filter' in dir() else len(df)
+        stats = {
+            'n_windows': n_total_scored,
+            'n_unique_mutations': n_unique_mutations,
+            'n_binders': int(n_binders),
+            'n_filtered': int(n_after_filter),
+            'n_selected': len(selected),
+        }
+        with open(args.output_stats, 'w') as f:
+            _json.dump(stats, f, indent=2)
+        print(f"Pipeline stats → {args.output_stats}", file=sys.stderr)
 
 
 if __name__ == '__main__':
