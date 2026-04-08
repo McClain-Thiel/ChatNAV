@@ -180,6 +180,10 @@
   - Drop both: R@20 = 0.7289 (+0.003) — no loss at all
 - **Feature AUCs:** struct_best 0.489 (below chance), tcr_facing 0.494 (chance)
 - **Decision:** Demote Tier 1 from default path. Do NOT invest in Tier 3 (AlphaFold2). Reclaim GPU budget. Structural scoring remains available in 'research' profile only.
+- **Root cause investigation (2026-04-08):** Debugged why TCR-facing position has no signal. Two confounders found:
+  1. **Saturation:** With 8-11mer windows, 96% of mutations are TCR-facing in *some* window (tcr_facing_orig = 1.0 for 8568/8891 mutations). The feature has almost no variance.
+  2. **Binding vs exposure tension:** BigMHC selects windows where mutation is at an *anchor* position (better binding), which anti-correlates with TCR-facing (positives mean 0.439 < negatives 0.463).
+  A better approach would be allele-specific anchor tables (which positions are anchors for the patient's specific HLA alleles) rather than generic position rules. This is a research direction worth revisiting — the biological signal is real but the current implementation can't capture it.
 - **Commit:** 6b34d4a
 
 ## EXP-050: Full novel ORF foreignness for frameshifts
