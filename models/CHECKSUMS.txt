@@ -1,0 +1,16 @@
+# SHA256 checksums for all model weights
+# Regenerate: find models/ -type f -not -name CHECKSUMS.txt | sort | xargs shasum -a 256
+#
+# If any checksum doesn't match, the model file has been corrupted or
+# replaced — results are not reproducible. Re-download from source.
+#
+# MHCflurry models are managed by mhcflurry-downloads and not tracked here.
+# Pin: mhcflurry==2.2.0, model release 2.2.0
+# BigMHC models are bundled in the pip package. Pin: BigMHC==1.0.1
+
+# DeepImmuno-CNN (legacy, not used in default pipeline)
+6a8c81c535c2647e3d13917545babb3aacabdc18491f10522cf20966da276941  DeepImmuno/models/cnn_model_331_3_7/.data-00000-of-00001
+3ee94283eec3af98f43e59ebd2ae124d8f762d57881e2408175c827e31a3af75  DeepImmuno/models/cnn_model_331_3_7/.index
+ba7ac3757b9a57bdd3e603acb528728d61a9479fe392a7f343330aad23f22c50  DeepImmuno/models/cnn_model_331_3_7/checkpoint
+092543f786601f43e69858d3310ba6e53a67e85b7bb439631587ce819dfd57ac  DeepImmuno/models/wassGAN_D.pth
+627ccd5857c40a5cc0f53ed131626e331a23f125181979232d3f9f263f657696  DeepImmuno/models/wassGAN_G.pth

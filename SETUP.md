@@ -14,15 +14,18 @@ Everything needed to reproduce this environment from scratch.
 ## Python Dependencies
 
 ```bash
-# Core pipeline
-pip install pandas numpy biopython scipy pyyaml requests scikit-learn
+# Core pipeline (exact versions pinned — see pyproject.toml)
+pip install pandas==2.3.2 numpy==2.0.2 biopython==1.85 scipy==1.13.1 \
+    pyyaml==6.0.2 requests==2.32.5 scikit-learn==1.6.1
 
-# MHC Binding — MHCflurry 2.x (Apache 2.0)
-pip install mhcflurry
-mhcflurry-downloads fetch models_class1_presentation   # ~135MB download
+# MHC Binding — MHCflurry 2.2.0 (Apache 2.0)
+# IMPORTANT: pin both the package AND model release — different versions
+# produce different percentile ranks
+pip install mhcflurry==2.2.0
+mhcflurry-downloads fetch models_class1_presentation   # model release 2.2.0, ~135MB
 
-# Immunogenicity — BigMHC-IM (primary, PyTorch-based)
-pip install git+https://github.com/griffithlab/bigmhc.git
+# Immunogenicity — BigMHC-IM 1.0.1 (primary, PyTorch-based)
+pip install git+https://github.com/griffithlab/bigmhc.git@v1.0.1
 
 # Protein sequence lookup — Ensembl release 110 (pinned)
 pip install pyensembl

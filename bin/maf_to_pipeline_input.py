@@ -245,7 +245,59 @@ def main():
                         help='Max mutations to process')
     parser.add_argument('--output-binding', required=True)
     parser.add_argument('--output-meta', required=True)
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Validate inputs without running predictions')
     args = parser.parse_args()
+
+    # ── Dry-run: validate inputs only ──
+    if args.dry_run:
+        errors = []
+
+        # Check MAF file
+        if not Path(args.maf).exists():
+            errors.append(f"MAF file not found: {args.maf}")
+        else:
+            maf = parse_maf(args.maf)
+            print(f"MAF: {len(maf)} variants", file=sys.stderr)
+
+        # Check expression file
+        if not Path(args.expression).exists():
+            errors.append(f"Expression file not found: {args.expression}")
+        else:
+            tpm = load_expression(args.expression)
+            print(f"Expression: {len(tpm)} genes", file=sys.stderr)
+
+        # Check HLA format
+        alleles = args.hla_alleles.split(',')
+        for a in alleles:
+            a = a.strip()
+            if not (a.startswith('HLA-') or a.startswith('DRB') or a.startswith('DQB') or a.startswith('DPB')):
+                errors.append(f"Invalid HLA format: {a} (expected HLA-A*02:01 or DRB1*01:01)")
+        print(f"HLA alleles: {len(alleles)} ({sum(1 for a in alleles if 'DRB' in a or 'DQB' in a or 'DPB' in a)} Class II)", file=sys.stderr)
+
+        # Check Ensembl
+        try:
+            ens = pyensembl.EnsemblRelease(release=args.ensembl_release, species='human')
+            print(f"Ensembl release {args.ensembl_release}: OK", file=sys.stderr)
+        except Exception as e:
+            errors.append(f"Ensembl release {args.ensembl_release}: {e}")
+
+        # Check MHCflurry
+        try:
+            from mhcflurry import Class1PresentationPredictor
+            Class1PresentationPredictor.load()
+            print("MHCflurry: OK", file=sys.stderr)
+        except Exception as e:
+            errors.append(f"MHCflurry: {e}")
+
+        if errors:
+            print(f"\nDRY RUN FAILED — {len(errors)} errors:", file=sys.stderr)
+            for e in errors:
+                print(f"  - {e}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print("\nDRY RUN OK — all inputs valid", file=sys.stderr)
+            sys.exit(0)
 
     # Load Ensembl reference
     print(f"Loading Ensembl release {args.ensembl_release}...", file=sys.stderr)
