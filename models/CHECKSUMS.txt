@@ -8,6 +8,9 @@
 # Pin: mhcflurry==2.2.0, model release 2.2.0
 # BigMHC models are bundled in the pip package. Pin: BigMHC==1.0.1
 
+# LightGBM reranker (EXP-022, 25 features, trained on Muller dev set)
+bfa6e48b591998a60aa75a249fb1488ff97b62af2905b52fe91c8930d05704b7  reranker/lgbm_reranker_v1.txt
+
 # DeepImmuno-CNN (legacy, not used in default pipeline)
 6a8c81c535c2647e3d13917545babb3aacabdc18491f10522cf20966da276941  DeepImmuno/models/cnn_model_331_3_7/.data-00000-of-00001
 3ee94283eec3af98f43e59ebd2ae124d8f762d57881e2408175c827e31a3af75  DeepImmuno/models/cnn_model_331_3_7/.index

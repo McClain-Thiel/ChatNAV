@@ -130,8 +130,25 @@ curl -L -o demo/tcga_skcm/TCGA-EE-A3J5_expression.tsv \
   "https://api.gdc.cancer.gov/data/d076714e-3a5a-479e-81d5-2a377d3e37ea"
 
 # 6. Run the pipeline
-python tests/run_e2e.py
+python bin/run_pipeline.py \
+    --maf demo/tcga_skcm/TCGA-EE-A3J5_somatic.maf.gz \
+    --expression demo/tcga_skcm/TCGA-EE-A3J5_expression.tsv \
+    --hla-alleles 'HLA-A*02:01,HLA-A*01:01,HLA-B*07:02,HLA-B*44:03,HLA-C*07:02,HLA-C*05:01' \
+    --patient-id TCGA-EE-A3J5 \
+    --output results/TCGA-EE-A3J5/
 ```
+
+### Pipeline outputs
+
+| File | Description |
+|---|---|
+| `selected_neoantigens.tsv` | Ranked epitope list with all scores and validation flags |
+| `polyepitope.faa` | Polyepitope amino acid sequence (signal peptide + epitopes + linkers + MITD) |
+| `polyepitope_design.tsv` | Construct layout with linker types and junction QC scores |
+| `mrna_sequence.fasta` | Synthesis-ready mRNA (codon-optimized, UTRs, poly-A) |
+| `synthesis_spec.json` | Full specification: sequence, pseudouridine positions, QC scans |
+| `summary_card.html` | One-page visual report for review |
+| `confidence.json` | Expected vaccine potency estimate based on benchmark data |
 
 ## How Each Step Works
 

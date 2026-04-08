@@ -178,6 +178,11 @@ def main():
     parser.add_argument('--weight-profile', default='high_tmb')
     parser.add_argument('--top-n', type=int, default=20)
     parser.add_argument('--structural-scores', default=None)
+    parser.add_argument('--reranker-model', default=None,
+                        help='Path to trained LightGBM model (.txt) for reranking. '
+                             'If provided, uses model predictions instead of binding-strength ranking.')
+    parser.add_argument('--reranker-features', default=None,
+                        help='Path to feature_columns.json for the reranker model')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
 
@@ -227,12 +232,57 @@ def main():
     if len(df) == 0:
         raise RuntimeError("No candidates passed filters — check binding data and thresholds")
 
-    # ── Step 5: Apply rank bonuses (frameshifts, shared neoantigens) ──
-    df = apply_rank_bonuses(df, bonuses)
+    # ── Step 5: Rank candidates ──
+    if args.reranker_model and args.reranker_features:
+        # LightGBM reranker: use model predictions for ranking
+        import json as _json
+        import lightgbm as lgb
 
-    # ── Step 6: Rank by effective binding rank (best binders first) ──
-    df = df.sort_values('effective_rank').reset_index(drop=True)
-    df['rank'] = range(1, len(df) + 1)
+        with open(args.reranker_features) as f:
+            feat_config = _json.load(f)
+        feature_cols = feat_config['features']
+
+        # Map pipeline column names to reranker feature names
+        col_map = {
+            'immunogenicity_score': 'bigmhc_best',
+            'foreignness_score': 'foreign_best',
+            'binding_rank': 'binding_score',
+            'structural_score': 'struct_best',
+        }
+        for old_name, new_name in col_map.items():
+            if old_name in df.columns and new_name not in df.columns:
+                if new_name == 'binding_score':
+                    df[new_name] = 1.0 - df[old_name].clip(0, 1)
+                else:
+                    df[new_name] = df[old_name]
+
+        # Compute derived features if missing
+        if 'expr_norm' not in df.columns:
+            df['expr_norm'] = df['tpm'].apply(normalize_expression)
+        if 'ccf_val' not in df.columns:
+            df['ccf_val'] = df.get('ccf', pd.Series(0.5)).fillna(0.5).clip(0, 1)
+        if 'agreto_norm' not in df.columns and 'agretopicity' in df.columns:
+            import math as _math
+            df['agreto_norm'] = df['agretopicity'].apply(
+                lambda a: 0.5 if pd.isna(a) else 1.0 / (1.0 + _math.exp(-0.5 * a))
+            )
+
+        # Fill missing features with 0
+        for col in feature_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+
+        model = lgb.Booster(model_file=args.reranker_model)
+        X = df[feature_cols].fillna(0).values
+        df['reranker_score'] = model.predict(X)
+        df = df.sort_values('reranker_score', ascending=False).reset_index(drop=True)
+        df['rank'] = range(1, len(df) + 1)
+        print(f"  Reranker: LightGBM ({len(feature_cols)} features)", file=sys.stderr)
+    else:
+        # Default: binding-strength ranking with bonuses
+        df = apply_rank_bonuses(df, bonuses)
+        df = df.sort_values('effective_rank').reset_index(drop=True)
+        df['rank'] = range(1, len(df) + 1)
 
     # ── Step 7: Class balance + HLA diversity ──
     # Ensure mix of Class I and Class II epitopes
