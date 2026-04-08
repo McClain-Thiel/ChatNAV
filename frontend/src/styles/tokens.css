@@ -1,0 +1,46 @@
+:root {
+  /* Backgrounds */
+  --bg-page: #f8f4ef;
+  --bg-sidebar: #f3ede5;
+  --bg-card: #ffffff;
+  --bg-hover: #f5efe6;
+  --bg-active: #ede6db;
+  --bg-inset: #faf7f2;
+
+  /* Borders */
+  --border-heavy: #1c1410;
+  --border-mid: #c9bfb2;
+  --border-light: #ddd5c8;
+  --border-faint: #ece5da;
+
+  /* Text */
+  --text-primary: #1c1410;
+  --text-secondary: #3c2a1a;
+  --text-meta: #6b5a47;
+  --text-muted: #9c8b78;
+  --text-faint: #b5a898;
+  --text-dim: #c9bfb2;
+
+  /* Status */
+  --status-complete: #2d6a4f;
+  --status-running: #92400e;
+  --status-queued: #b5a898;
+  --status-error: #7f1d1d;
+
+  /* Status backgrounds */
+  --status-complete-bg: #f0fdf4;
+  --status-running-bg: #fffbf0;
+  --status-error-bg: #fdf0f0;
+
+  /* Score colours */
+  --score-high: #2d6a4f;
+  --score-mid: #92400e;
+  --score-low: #7f1d1d;
+
+  /* Neoantigen colours */
+  --ep-01: #8b1a1a; --ep-02: #b5451b; --ep-03: #c47c2e; --ep-04: #8a7e2e;
+  --ep-05: #3d6b2e; --ep-06: #2e6b5e; --ep-07: #2e4d8a; --ep-08: #4a2e8a;
+  --ep-09: #7a2e8a; --ep-10: #8a2e5e; --ep-11: #6b3a2e; --ep-12: #4a6b2e;
+  --ep-13: #2e6b4a; --ep-14: #2e5e8a; --ep-15: #5e2e8a; --ep-16: #8a4a2e;
+  --ep-17: #2e8a6b; --ep-18: #8a6b2e; --ep-19: #4a2e6b; --ep-20: #6b2e4a;
+}
